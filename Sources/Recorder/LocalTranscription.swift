@@ -83,27 +83,6 @@ enum TranscriptionLanguage {
 @Observable
 final class LocalTranscriptionEngine {
 
-    enum EngineState: Equatable {
-        case unloaded
-        /// Model selected but not on disk yet; downloads on first use.
-        case notDownloaded(String)
-        case downloading(String, Double)
-        case loading(String)
-        case ready
-        case failed(String)
-    }
-
-    enum EngineError: LocalizedError {
-        case modelNotReady(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .modelNotReady(let detail):
-                return "Transcription model is not ready: \(detail)"
-            }
-        }
-    }
-
     /// What `endSession` produced. `complete` is false when the final tail
     /// could not be transcribed (model unavailable, decode error, or a new
     /// session superseded the finalization), so callers can fall back to a
@@ -115,15 +94,13 @@ final class LocalTranscriptionEngine {
 
     // MARK: Observable state
 
-    var engineState: EngineState = .unloaded
-    /// The model the user selected (may still be downloading or have failed).
-    var modelName: String = WhisperModelOption.defaultModelID
-    /// The model actually loaded and answering transcriptions, nil before the
-    /// first successful load. Diverges from `modelName` while a switch is in
-    /// flight or after a failed switch kept the previous model running.
-    var loadedModelName: String? = nil
-    /// Set when switching models failed and the previous model was kept.
-    var loadFailureMessage: String? = nil
+    let host = WhisperModelStorage.makeHost()
+
+    var engineState: ModelLoadState { host.state }
+    var modelName: String { host.selectedModel }
+    var loadedModelName: String? { host.loadedModel }
+    var loadFailureMessage: String? { host.loadFailureMessage }
+
     var confirmedLines: [TranscriptLine] = []
     var hypothesis: String = ""
     var isSessionActive = false
@@ -148,9 +125,7 @@ final class LocalTranscriptionEngine {
 
     // MARK: Private state
 
-    @ObservationIgnored private var pipe: WhisperKit?
     @ObservationIgnored private var speakerKit: SpeakerKit?
-    @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var ticking = false
     @ObservationIgnored private var offlineBusy = false
@@ -185,133 +160,10 @@ final class LocalTranscriptionEngine {
 
     private static let log = Logger(subsystem: "com.tobi.Recorder", category: "LocalTranscription")
 
-    /// ~/Library/Application Support/Recorder/WhisperModels
-    private static var modelStorageBase: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? FileManager.default.homeDirectoryForCurrentUser
-        return base
-            .appendingPathComponent("Recorder", isDirectory: true)
-            .appendingPathComponent("WhisperModels", isDirectory: true)
-    }
-
-    private static func localModelFolder(for name: String) -> URL {
-        modelStorageBase
-            .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent("argmaxinc/whisperkit-coreml", isDirectory: true)
-            .appendingPathComponent(name, isDirectory: true)
-    }
-
-    private static func isDownloaded(_ name: String) -> Bool {
-        FileManager.default.fileExists(
-            atPath: localModelFolder(for: name).appendingPathComponent("TextDecoder.mlmodelc").path
-        )
-    }
-
     // MARK: Model loading
 
-    /// Load `name`, downloading it first when missing and `downloadIfNeeded`
-    /// is set. Repeat calls for the model already loaded (or loading) are
-    /// no-ops; a call for a different model supersedes any load in flight. The
-    /// previously loaded model keeps serving transcriptions until the new one
-    /// is ready, and is kept (with `loadFailureMessage` set) when the switch
-    /// fails, so a bad download never takes down a working setup.
     func loadModel(_ name: String, downloadIfNeeded: Bool) async {
-        modelName = name
-
-        switch engineState {
-        case .ready where loadedModelName == name:
-            return
-        case .downloading(let inFlight, _) where inFlight == name:
-            return
-        case .loading(let inFlight) where inFlight == name:
-            return
-        case .notDownloaded(let pending) where pending == name && !downloadIfNeeded:
-            return
-        default:
-            break
-        }
-
-        loadGeneration += 1
-        let generation = loadGeneration
-        loadFailureMessage = nil
-
-        if !Self.isDownloaded(name) && !downloadIfNeeded {
-            if pipe == nil {
-                engineState = .notDownloaded(name)
-            }
-            return
-        }
-
-        do {
-            let folder: URL
-            if Self.isDownloaded(name) {
-                folder = Self.localModelFolder(for: name)
-            } else {
-                engineState = .downloading(name, 0)
-                folder = try await WhisperKit.download(
-                    variant: name,
-                    downloadBase: Self.modelStorageBase,
-                    progressCallback: { progress in
-                        let fraction = progress.fractionCompleted
-                        Task { @MainActor [weak self] in
-                            guard let self, self.loadGeneration == generation else { return }
-                            self.engineState = .downloading(name, fraction)
-                        }
-                    }
-                )
-            }
-            guard loadGeneration == generation else { return }
-
-            engineState = .loading(name)
-            let config = WhisperKitConfig(
-                model: name,
-                downloadBase: Self.modelStorageBase,
-                modelFolder: folder.path,
-                verbose: false,
-                logLevel: .none,
-                load: true,
-                download: false
-            )
-            let loaded = try await WhisperKit(config)
-            guard loadGeneration == generation else { return }
-            pipe = loaded
-            loadedModelName = name
-            engineState = .ready
-        } catch {
-            guard loadGeneration == generation else { return }
-            Self.log.error("model load failed: \(error.localizedDescription)")
-            if pipe != nil, let previous = loadedModelName {
-                engineState = .ready
-                loadFailureMessage = "Could not switch to \(WhisperModelOption.label(for: name)): \(error.localizedDescription). Still using \(WhisperModelOption.label(for: previous))."
-            } else {
-                engineState = .failed(error.localizedDescription)
-            }
-        }
-    }
-
-    /// Wait until a model is loaded, kicking off a (re)load when the engine is
-    /// idle or a previous attempt failed. Throws when loading fails again or
-    /// the timeout passes.
-    private func awaitReady(timeout: TimeInterval = 600) async throws -> WhisperKit {
-        switch engineState {
-        case .notDownloaded, .unloaded, .failed:
-            await loadModel(modelName, downloadIfNeeded: true)
-        default:
-            break
-        }
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let pipe, case .ready = engineState { return pipe }
-            if case .failed(let message) = engineState {
-                throw EngineError.modelNotReady(message)
-            }
-            try? await Task.sleep(for: .milliseconds(250))
-        }
-        throw EngineError.modelNotReady("timed out waiting for the model to load")
+        await host.loadModel(name, downloadIfNeeded: downloadIfNeeded)
     }
 
     // MARK: Live session
@@ -457,7 +309,7 @@ final class LocalTranscriptionEngine {
             if final { finalTickComplete = true }
             return
         }
-        guard let pipe else { return }
+        guard host.loadedModel != nil else { return }
         if fresh.isEmpty && !final { return }
 
         if !final && windowRMS() < Self.silenceRMSFloor && hypothesis.isEmpty {
@@ -469,10 +321,11 @@ final class LocalTranscriptionEngine {
         }
 
         do {
-            let results = try await pipe.transcribe(
-                audioArray: windowSamples,
-                decodeOptions: decodingOptions(forFile: false)
-            )
+            let window = windowSamples
+            let options = decodingOptions(forFile: false)
+            let results = try await host.withPipe { pipe in
+                try await pipe.transcribe(audioArray: window, decodeOptions: options)
+            }
             guard generation == sessionGeneration else { return }
             let segments = cleanSegments(results)
 
@@ -600,22 +453,15 @@ final class LocalTranscriptionEngine {
     /// Serialized against the live tick loop: WhisperKit carries mutable decode
     /// state, so one pipe must never transcribe twice concurrently.
     func transcribeFile(_ url: URL) async throws -> String {
-        let pipe = try await awaitReady()
-        while ticking || offlineBusy {
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-        offlineBusy = true
-        defer { offlineBusy = false }
-
         let path = url.path
         let samples = try await Task.detached(priority: .utility) {
             try AudioProcessor.loadAudioAsFloatArray(fromPath: path)
         }.value
 
-        let results = try await pipe.transcribe(
-            audioArray: samples,
-            decodeOptions: decodingOptions(forFile: true)
-        )
+        let options = decodingOptions(forFile: true)
+        let results = try await host.withPipe { pipe in
+            try await pipe.transcribe(audioArray: samples, decodeOptions: options)
+        }
         let segments = cleanSegments(results)
 
         var speakers: [String?] = Array(repeating: nil, count: segments.count)
@@ -646,7 +492,7 @@ final class LocalTranscriptionEngine {
     private func diarizer() async throws -> SpeakerKit {
         if let speakerKit { return speakerKit }
         let config = PyannoteConfig(
-            downloadBase: Self.modelStorageBase.path,
+            downloadBase: WhisperModelStorage.base.path,
             download: true,
             load: false,
             verbose: false

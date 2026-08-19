@@ -660,7 +660,7 @@ final class RecorderModel {
     }
 
     private static func describeTranscriptionError(_ error: Error) -> String {
-        if let e = error as? LocalTranscriptionEngine.EngineError {
+        if let e = error as? WhisperModelHost.HostError {
             return e.errorDescription ?? "Transcription failed."
         }
         let ns = error as NSError
