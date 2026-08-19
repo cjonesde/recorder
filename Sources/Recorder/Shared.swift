@@ -114,17 +114,17 @@ struct Meeting: Identifiable, Equatable {
 struct RecordingSession {
     /// ~/Documents/Recordings/{yyyy-M-d}-{HHmm}[-suffix]/
     let folderURL: URL
-    /// folderURL + "desktop.caf"
-    let desktopURL: URL
-    /// folderURL + "mic.caf"
-    let micURL: URL
-    /// folderURL + "audio.m4a"
-    let outputURL: URL
+    /// folderURL + "desktop.caf", nil when no audio is retained.
+    let desktopURL: URL?
+    /// folderURL + "mic.caf", nil when no audio is retained.
+    let micURL: URL?
+    /// folderURL + "audio.m4a", nil when no audio is retained.
+    let outputURL: URL?
     let startedAt: Date
     let meetingTitle: String?
 
     /// Creates the dated folder and returns the session. Throws on filesystem error.
-    static func create(now: Date, meetingTitle: String?) throws -> RecordingSession {
+    static func create(now: Date, meetingTitle: String?, mode: AudioHandlingMode) throws -> RecordingSession {
         let fm = FileManager.default
 
         let documents = try fm.url(
@@ -168,9 +168,9 @@ struct RecordingSession {
 
         return RecordingSession(
             folderURL: folderURL,
-            desktopURL: folderURL.appendingPathComponent("desktop.caf"),
-            micURL: folderURL.appendingPathComponent("mic.caf"),
-            outputURL: folderURL.appendingPathComponent("audio.m4a"),
+            desktopURL: mode.retainsAudio ? folderURL.appendingPathComponent("desktop.caf") : nil,
+            micURL: mode.retainsAudio ? folderURL.appendingPathComponent("mic.caf") : nil,
+            outputURL: mode.retainsAudio ? folderURL.appendingPathComponent("audio.m4a") : nil,
             startedAt: now,
             meetingTitle: meetingTitle
         )

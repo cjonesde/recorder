@@ -52,4 +52,18 @@ final class AudioHandlingModeTests: XCTestCase {
             XCTAssertFalse(mode.detail.contains("\u{2014}"))
         }
     }
+
+    @MainActor
+    func testTranscriptOnlyUsesTheShorterLiveWindow() {
+        XCTAssertEqual(
+            LiveTranscriber.windowCap(for: .transcriptOnly),
+            90 * Int(SampleInbox.targetRate)
+        )
+        for mode in [AudioHandlingMode.keepAudio, .keepAudioAndPolish] {
+            XCTAssertEqual(
+                LiveTranscriber.windowCap(for: mode),
+                15 * 60 * Int(SampleInbox.targetRate)
+            )
+        }
+    }
 }

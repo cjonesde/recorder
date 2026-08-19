@@ -77,8 +77,30 @@ final class LiveTranscriber {
 
     private static let log = Logger(subsystem: "com.tobi.Recorder", category: "LiveTranscriber")
 
+    /// In transcript-only mode this buffer is the only place audio exists, so it is
+    /// bounded far more tightly than when the audio is on disk anyway.
+    static func windowCap(for mode: AudioHandlingMode) -> Int {
+        mode.retainsAudio
+            ? 15 * 60 * Int(SampleInbox.targetRate)
+            : 90 * Int(SampleInbox.targetRate)
+    }
+
     init(host: WhisperModelHost) {
         self.host = host
+    }
+
+    /// Overwrite buffered audio before releasing it. In transcript-only mode this buffer
+    /// is the only copy that ever existed, so the no-retention claim rests on it.
+    private func discardWindow(upTo count: Int) {
+        let n = min(count, windowSamples.count)
+        guard n > 0 else { return }
+        for i in 0..<n { windowSamples[i] = 0 }
+        windowSamples.removeFirst(n)
+    }
+
+    private func clearWindow() {
+        for i in windowSamples.indices { windowSamples[i] = 0 }
+        windowSamples.removeAll(keepingCapacity: false)
     }
 
     // MARK: Live session
@@ -88,7 +110,7 @@ final class LiveTranscriber {
         confirmedLines = []
         hypothesis = ""
         revision += 1
-        windowSamples = []
+        clearWindow()
         windowStartSample = 0
         desktopEnvelope = []
         micEnvelope = []
@@ -158,7 +180,7 @@ final class LiveTranscriber {
         tickTask?.cancel()
         tickTask = nil
         isSessionActive = false
-        windowSamples = []
+        clearWindow()
         windowStartSample = 0
         desktopEnvelope = []
         micEnvelope = []
@@ -199,7 +221,7 @@ final class LiveTranscriber {
         }
         if windowSamples.count > maxWindowSamples {
             let overflow = windowSamples.count - maxWindowSamples
-            windowSamples.removeFirst(overflow)
+            discardWindow(upTo: overflow)
             windowStartSample += overflow
             noteGap()
         }
@@ -214,7 +236,7 @@ final class LiveTranscriber {
         if !final && windowRMS() < Self.silenceRMSFloor && hypothesis.isEmpty {
             if windowSamples.count > Self.confirmThresholdSamples {
                 windowStartSample += windowSamples.count
-                windowSamples.removeAll(keepingCapacity: true)
+                clearWindow()
             }
             return
         }
@@ -232,7 +254,7 @@ final class LiveTranscriber {
                 confirm(segments)
                 hypothesis = ""
                 windowStartSample += windowSamples.count
-                windowSamples.removeAll()
+                clearWindow()
                 finalTickComplete = true
             } else if windowSamples.count >= Self.confirmThresholdSamples {
                 let cutSample = segments.count > 1
@@ -244,14 +266,14 @@ final class LiveTranscriber {
                 if segments.count > 1 && cutSample > 0 {
                     let trailing = segments.last!
                     confirm(Array(segments.dropLast()))
-                    windowSamples.removeFirst(cutSample)
+                    discardWindow(upTo: cutSample)
                     windowStartSample += cutSample
                     hypothesis = trailing.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 } else if windowSamples.count >= Self.hardWindowCapSamples {
                     confirm(segments)
                     hypothesis = ""
                     windowStartSample += windowSamples.count
-                    windowSamples.removeAll()
+                    clearWindow()
                 } else {
                     hypothesis = segments
                         .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }

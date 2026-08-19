@@ -12,6 +12,10 @@ import os
 /// live audio device, so it is opt-in:
 ///
 ///     RECORDER_LIVE_TAP=1 swift test --filter LiveTapVerificationTests
+///
+/// The desktop tap only delivers buffers while the output device is actually playing,
+/// so play continuous audio for the duration or the tap tests see silence and report
+/// zero samples. A tone long enough to cover the whole run is the simplest way.
 final class LiveTapVerificationTests: XCTestCase {
 
     func testDeclaredRateMatchesProducedSamplesPerWallSecond() throws {
@@ -126,5 +130,61 @@ final class LiveTapVerificationTests: XCTestCase {
         XCTAssertEqual(rates.count, 1, "onSamples reported multiple rates: \(rates)")
         XCTAssertEqual(rates.keys.first, declared)
         XCTAssertEqual(result.sampleRate, declared)
+    }
+
+    func testNilDestinationWritesNoFileButStillStreamsSamples() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RECORDER_LIVE_TAP"] == "1",
+            "set RECORDER_LIVE_TAP=1 to run the no-retention check"
+        )
+
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("noretain-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let mic = MicCapture()
+        let streamed = OSAllocatedUnfairLock<Int>(initialState: 0)
+        mic.onSamples = { _, count, _ in
+            streamed.withLock { $0 += count }
+        }
+
+        try mic.start(writingTo: nil)
+        Thread.sleep(forTimeInterval: 3.0)
+        let result = mic.stop()
+
+        XCTAssertGreaterThan(streamed.withLock { $0 }, 0, "no samples reached the inbox")
+        XCTAssertGreaterThan(result.frameCount, 0, "frames were not counted")
+
+        let contents = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertTrue(contents.isEmpty, "transcript-only mode wrote \(contents)")
+    }
+
+    func testTapWithNilDestinationWritesNoFileButStillStreamsSamples() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RECORDER_LIVE_TAP"] == "1",
+            "set RECORDER_LIVE_TAP=1 to run the no-retention check"
+        )
+
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("noretaintap-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let tap = SystemAudioTap()
+        let streamed = OSAllocatedUnfairLock<Int>(initialState: 0)
+        tap.onSamples = { _, count, _ in
+            streamed.withLock { $0 += count }
+        }
+
+        try tap.start(writingTo: nil)
+        Thread.sleep(forTimeInterval: 4.0)
+        let result = tap.stop()
+
+        XCTAssertGreaterThan(streamed.withLock { $0 }, 0, "no samples reached the inbox")
+        XCTAssertGreaterThan(result.frameCount, 0, "frames were not counted")
+
+        let contents = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertTrue(contents.isEmpty, "transcript-only mode wrote \(contents)")
     }
 }

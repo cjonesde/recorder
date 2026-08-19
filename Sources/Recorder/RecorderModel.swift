@@ -104,6 +104,10 @@ final class RecorderModel {
     /// title + attendees are available as transcript context at save time.
     @ObservationIgnored private var activeMeeting: Meeting?
 
+    /// The mode the recording in progress actually started with, which can differ from
+    /// `audioHandlingMode` after a mid-recording downgrade.
+    @ObservationIgnored private var activeMode: AudioHandlingMode = .default
+
     /// Everything needed to (re)run a transcription, captured at save time.
     private struct PendingTranscription {
         let audioURL: URL?
@@ -197,16 +201,24 @@ final class RecorderModel {
     func startRecording(meeting: Meeting?) {
         guard state == .idle else { return }
 
+        let mode = audioHandlingMode
+        guard !mode.producesNothing(liveTranscriptionEnabled: liveTranscriptionEnabled) else {
+            statusMessage = "Transcript-only mode needs live transcription switched on, otherwise nothing would be saved."
+            return
+        }
+
         let now = Date()
         let session: RecordingSession
         do {
-            session = try RecordingSession.create(now: now, meetingTitle: meeting?.title)
+            session = try RecordingSession.create(now: now, meetingTitle: meeting?.title, mode: mode)
         } catch {
             statusMessage = "Could not create recording folder: \(error.localizedDescription)"
             return
         }
         currentSession = session
         activeMeeting = meeting
+        activeMode = mode
+        live.live.maxWindowSamples = LiveTranscriber.windowCap(for: mode)
 
         // Clear any previous recording's transcription UI.
         transcriptionState = .idle
@@ -306,22 +318,12 @@ final class RecorderModel {
 
         cancelTimersAndAlerts()
         state = .idle
-        statusMessage = "Mixing…"
 
-        let outputURL = session.outputURL
-        let desktopURL = session.desktopURL
-        let micURL = session.micURL
+        let mode = activeMode
         let folderURL = session.folderURL
         let startedAt = session.startedAt
         let meetingTitle = activeMeeting?.title ?? session.meetingTitle
         let attendees = activeMeeting?.attendees ?? []
-        let pending = PendingTranscription(
-            audioURL: outputURL,
-            folderURL: folderURL,
-            meetingTitle: meetingTitle,
-            attendees: attendees,
-            startedAt: startedAt
-        )
 
         // Finalize the live transcript (transcribes the remaining tail) in
         // parallel with the mix. Only awaited when a transcript will actually
@@ -329,7 +331,48 @@ final class RecorderModel {
         let liveTask: Task<LiveTranscriber.LiveSessionResult, Never>? = live.isSessionActive
             ? Task { [live] in await live.endSession() }
             : nil
-        let wantsTranscript = liveTranscriptionEnabled || audioHandlingMode.runsPolishPass
+
+        // No audio was ever written, so there is nothing to mix and nothing to polish.
+        guard mode.retainsAudio,
+              let outputURL = session.outputURL,
+              let desktopURL = session.desktopURL,
+              let micURL = session.micURL else {
+            let pending = PendingTranscription(
+                audioURL: nil,
+                folderURL: folderURL,
+                meetingTitle: meetingTitle,
+                attendees: attendees,
+                startedAt: startedAt
+            )
+            lastTranscription = pending
+            transcriptionState = .running
+            statusMessage = "Finishing the transcript…"
+            Task { [weak self] in
+                guard let self else { return }
+                guard let liveResult = await liveTask?.value, !liveResult.isEmpty else {
+                    self.transcriptionState = .failed("Nothing was transcribed, and no audio was kept.")
+                    self.statusMessage = "Nothing to save"
+                    self.refreshRecordings()
+                    return
+                }
+                self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: true)
+                self.statusMessage = "Transcript saved, no audio kept"
+            }
+            currentSession = nil
+            activeMeeting = nil
+            silenceMonitor = nil
+            return
+        }
+
+        statusMessage = "Mixing…"
+        let pending = PendingTranscription(
+            audioURL: outputURL,
+            folderURL: folderURL,
+            meetingTitle: meetingTitle,
+            attendees: attendees,
+            startedAt: startedAt
+        )
+        let wantsTranscript = liveTranscriptionEnabled || mode.runsPolishPass
         if wantsTranscript {
             transcriptionState = .running
         }
@@ -371,7 +414,7 @@ final class RecorderModel {
                 guard let self else { return }
                 if let liveResult, !liveResult.isEmpty, liveResult.complete {
                     self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: mixError != nil)
-                } else if mixError == nil {
+                } else if mixError == nil, mode.runsPolishPass {
                     self.startTranscription(pending)
                 } else if let liveResult, !liveResult.isEmpty {
                     self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: true)
