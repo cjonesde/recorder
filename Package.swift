@@ -8,9 +8,15 @@ let package = Package(
         // realtime-safe ring buffer in the system-audio tap) requires it.
         .macOS("15")
     ],
+    dependencies: [
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "1.1.0")
+    ],
     targets: [
         .executableTarget(
             name: "Recorder",
+            dependencies: [
+                .product(name: "WhisperKit", package: "WhisperKit")
+            ],
             path: "Sources/Recorder",
             swiftSettings: [
                 .swiftLanguageMode(.v5)

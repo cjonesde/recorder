@@ -7,9 +7,10 @@ so you can always tell who was on the call from who was in the room:
 - **Desktop / system audio → Left channel** (the people you hear through your speakers)
 - **Your microphone → Right channel** (you, and anyone physically with you)
 
-Optionally, it then **transcribes and diarizes** the recording with Google Gemini, using the
-stereo layout (left = remote, right = local) plus the meeting's calendar attendees to sharpen
-the speaker labels.
+It also **transcribes fully on-device** with a local Whisper model (via
+[WhisperKit](https://github.com/argmaxinc/WhisperKit), CoreML on Apple Silicon): the transcript
+**streams live into the panel while you record**, with a copy button and a model switcher. No
+API key, no audio ever leaves the machine.
 
 Pure Swift / SwiftUI. No Dock icon, no external runtime dependencies, no ffmpeg — just a
 single ad-hoc-signed `.app`.
@@ -36,9 +37,13 @@ mic right**, the channels stay cleanly separated:
 - **Calendar-aware**: the panel lists nearby meetings (last couple, the current one, and the
   next couple). Click one to start a recording named after it; the in-progress meeting is
   highlighted.
-- **Automatic transcription** via Gemini when a recording is saved (toggleable). Produces a
-  timestamped, diarized Markdown transcript with a separate "speaker identity guesses" section
-  — real names are never forced into the transcript body.
+- **Live transcription** while recording: a local Whisper model transcribes the mixed
+  desktop + mic audio in a sliding window and streams the text into the panel as it is
+  spoken. A **copy button** grabs the transcript so far at any moment, and a **model
+  switcher** (Tiny up to Large v3 Turbo) works even mid-recording.
+- **Automatic transcript.md** when a recording is saved (toggleable): the live transcript is
+  written next to the audio, or, when live transcription was off, the saved audio is
+  transcribed offline with the same local model.
 - **Recordings library**: browse and re-open past recordings and their transcripts right from
   the panel, even after a relaunch.
 - **Silence auto-stop**: ends a recording after a configurable period of two-channel silence
@@ -61,7 +66,7 @@ short version:
 | **Microphone** | A separate `AVAudioEngine` input tap. Format is read from the device (never hardcoded — Bluetooth mics report odd sample rates). |
 | **Two captures, merged on stop** | Each source streams to its own raw `.caf`. They're aligned (via first-buffer host-time skew), resampled to a common 48 kHz, interleaved (L=desktop, R=mic), and encoded to AAC `.m4a` only on Save. The raw files are kept. |
 | **Realtime safety** | The IOProc runs on a hard-realtime thread (~10 ms deadline). It does **memcpy only**, into a lock-free single-producer/single-consumer [ring buffer](Sources/Recorder/FloatRingBuffer.swift); a background thread drains the ring to disk. No `malloc`, no file I/O on the audio thread — which is what eliminates the buffer-boundary clicks a naive `write()`-in-the-callback design produces. |
-| **Transcription** | Gemini Files API (resumable upload → poll until `ACTIVE` → `generateContent`) on a Flash model with `thinkingBudget = 0`. |
+| **Transcription** | On-device Whisper via [WhisperKit](https://github.com/argmaxinc/WhisperKit) (CoreML, ANE-accelerated). While recording, both captures feed a lock-guarded inbox on their non-realtime writer paths, get resampled to 16 kHz mono and mixed, and a tick loop re-transcribes a sliding ~25 s window every few seconds, confirming all segments but the trailing one. Saved files are transcribed offline through the same model. |
 
 ---
 
@@ -69,7 +74,9 @@ short version:
 
 - **macOS 15+** (the realtime ring buffer uses the `Synchronization` module's `Atomic`).
 - **Xcode 26 / Swift 6.x** to build. Developed and tested on macOS 26.3, Apple Silicon.
-- A **Google Gemini API key** if you want transcription (optional; recording works without it).
+- **Network on first use of a model**: transcription runs fully offline, but each Whisper
+  model (~110 MB to ~630 MB) is downloaded once from Hugging Face into
+  `~/Library/Application Support/Recorder/WhisperModels`.
 
 ---
 
@@ -102,14 +109,22 @@ Granted on first use via standard system prompts (declared in `Info.plist`):
 
 ## Transcription setup
 
-1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).
-2. Open the panel → **Settings** → paste the key under **API key**. It's stored in the macOS
-   **Keychain** (never written to disk in plaintext, never committed).
-3. (Optional) Set **your name** under Identity — it's passed to the model as a hint that the
-   right-channel voice is usually you. There is no baked-in default; leave it blank to stay
-   anonymous.
-4. Toggle **auto-transcribe** on/off. With it off, recordings still save and you can transcribe
-   later.
+Nothing to configure for a first run: the default **Base** model (~150 MB, multilingual)
+downloads automatically the first time you record or transcribe. In the panel or under
+**Settings → Transcription** you can:
+
+1. **Switch models**: Tiny / Base / Small / Small compressed / Large v3 Turbo compressed.
+   Bigger is more accurate and slower; on an 8 GB M1, Base or Small compressed is the sweet
+   spot, and Large v3 Turbo compressed (~630 MB) gives the best quality if you have the RAM.
+   All listed models handle German and English.
+2. **Pick a language** or leave it on auto-detect (re-detected per window, so mixed
+   German/English meetings work).
+3. Toggle **live transcription** (the streaming panel view) and **auto-transcribe** (writing
+   `transcript.md` after saving) independently.
+
+Everything runs on-device; no audio or text leaves the machine. Speaker diarization is not
+included (the old Gemini path had it); the stereo layout in the saved audio still separates
+remote (left) from local (right) if you need to attribute voices later.
 
 The transcript is written next to the audio as `transcript.md`.
 
@@ -123,7 +138,7 @@ Recordings land in `~/Documents/Recordings/{YYYY-M-D}-{HHMM}[-{meeting}]/`:
 desktop.caf    raw mono system audio  (flushed continuously while recording)
 mic.caf        raw mono microphone    (flushed continuously while recording)
 audio.m4a      stereo AAC mix — desktop = L, mic = R (produced on Save; raw files kept)
-transcript.md  diarized Markdown transcript (if transcription ran)
+transcript.md  timestamped Markdown transcript (if transcription ran)
 ```
 
 CAF (not WAV) is used for the raw files so long meetings don't hit the 4 GB WAV ceiling.
@@ -137,14 +152,14 @@ Sources/Recorder/
   RecorderApp.swift          MenuBarExtra scene + app delegate adaptor
   AppDelegate.swift          .accessory activation policy; notification setup
   RecorderModel.swift        @Observable state machine; owns captures, monitors, meetings
-  Preferences.swift          typed UserDefaults wrapper (name, silence, auto-transcribe)
-  Keychain.swift             Gemini API key storage in the login Keychain
+  Preferences.swift          typed UserDefaults wrapper (model, language, silence, auto-transcribe)
   SystemAudioTap.swift       process tap + aggregate + IOProc → desktop.caf; watchdog
   FloatRingBuffer.swift      lock-free SPSC ring buffer (realtime-safe capture path)
   MicCapture.swift           AVAudioEngine input tap → mic.caf
   AudioMonitors.swift        RMS → dBFS metering + dual-channel silence monitor
   StereoMixer.swift          align + resample + interleave (L=desktop, R=mic) + AAC → m4a
-  GeminiTranscriber.swift    Gemini Files API upload + diarization prompt + generateContent
+  LocalTranscription.swift   WhisperKit engine: model catalog + download, live sliding-window
+                             streaming (sample inbox + resamplers), offline file transcription
   CalendarAccess.swift       EventKit: full-access auth, meetings-around-now
   NotificationManager.swift  meeting-end alert + "Stop Recording" action
   RecordingsLibrary.swift    reads ~/Documents/Recordings for the past-recordings list
@@ -162,6 +177,10 @@ docs/research-notes.md       SDK-verified API rationale behind the design
   is acceptable for personal use).
 - Acoustic echo cancellation (assumes headphones; AEC would muddy the deliberate hard channel
   separation).
+- Local speaker diarization. The per-channel raw files make a cheap two-party split possible
+  (transcribe desktop.caf and mic.caf separately and interleave by timestamp) and streaming
+  diarizers (Sortformer, FluidAudio/SpeakerKit) could label voices properly; neither is wired
+  up yet.
 
 ---
 

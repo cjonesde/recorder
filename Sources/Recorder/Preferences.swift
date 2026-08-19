@@ -9,20 +9,13 @@ enum Preferences {
     private static let defaults = UserDefaults.standard
 
     private enum Key {
-        static let speakerName        = "localSpeakerName"
-        static let silenceTimeout     = "silenceTimeoutSeconds"
-        static let silenceThresholdDB = "silenceThresholdDB"
-        static let silenceAutoStop    = "silenceAutoStopEnabled"
-        static let autoTranscribe     = "autoTranscribeAfterSave"
-        static let promptTemplate     = "geminiPromptTemplate"
-    }
-
-    /// Your name — used only as transcription context to label the local voice
-    /// (the microphone / right channel) when guessing who said what. Empty means
-    /// "don't name the local speaker". There is intentionally NO baked-in default.
-    static var speakerName: String {
-        get { defaults.string(forKey: Key.speakerName) ?? "" }
-        set { defaults.set(newValue, forKey: Key.speakerName) }
+        static let silenceTimeout      = "silenceTimeoutSeconds"
+        static let silenceThresholdDB  = "silenceThresholdDB"
+        static let silenceAutoStop     = "silenceAutoStopEnabled"
+        static let autoTranscribe      = "autoTranscribeAfterSave"
+        static let whisperModel        = "whisperModelName"
+        static let language            = "transcriptionLanguage"
+        static let liveTranscription   = "liveTranscriptionEnabled"
     }
 
     /// Seconds of two-channel silence before a recording auto-stops. Default 300 (5 min).
@@ -43,17 +36,38 @@ enum Preferences {
         set { defaults.set(newValue, forKey: Key.silenceAutoStop) }
     }
 
-    /// Whether to transcribe automatically once a recording is saved. Default true.
+    /// Whether to write `transcript.md` automatically once a recording is saved.
+    /// Uses the live transcript when one exists, otherwise transcribes the saved
+    /// audio with the local model. Default true.
     static var autoTranscribe: Bool {
         get { defaults.object(forKey: Key.autoTranscribe) == nil ? true : defaults.bool(forKey: Key.autoTranscribe) }
         set { defaults.set(newValue, forKey: Key.autoTranscribe) }
     }
 
-    /// User-customized Gemini transcription prompt. **Empty means "use the built-in
-    /// default"** — we store empty rather than a copy of the default so that future
-    /// improvements to the default prompt still reach users who never customized it.
-    static var promptTemplate: String {
-        get { defaults.string(forKey: Key.promptTemplate) ?? "" }
-        set { defaults.set(newValue, forKey: Key.promptTemplate) }
+    /// Selected on-device Whisper model (a WhisperKit variant name from
+    /// `WhisperModelOption.catalog`).
+    static var whisperModel: String {
+        get {
+            let stored = defaults.string(forKey: Key.whisperModel) ?? ""
+            return stored.isEmpty ? WhisperModelOption.defaultModelID : stored
+        }
+        set { defaults.set(newValue, forKey: Key.whisperModel) }
+    }
+
+    /// Transcription language: an ISO code ("de", "en", ...) or "auto" to
+    /// detect per window. Default "auto".
+    static var language: String {
+        get {
+            let stored = defaults.string(forKey: Key.language) ?? ""
+            return stored.isEmpty ? "auto" : stored
+        }
+        set { defaults.set(newValue, forKey: Key.language) }
+    }
+
+    /// Whether the transcript streams live into the panel while recording.
+    /// Default true.
+    static var liveTranscription: Bool {
+        get { defaults.object(forKey: Key.liveTranscription) == nil ? true : defaults.bool(forKey: Key.liveTranscription) }
+        set { defaults.set(newValue, forKey: Key.liveTranscription) }
     }
 }

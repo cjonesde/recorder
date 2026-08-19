@@ -26,6 +26,10 @@ final class MicCapture {
     var onLevelDB: ((Float) -> Void)?
     /// Called on an arbitrary thread when the engine fails fatally.
     var onFatalError: ((Error) -> Void)?
+    /// Mono samples that were just written to disk (post-downmix), with the
+    /// capture sample rate. Called on the audio thread; the pointer is only
+    /// valid for the duration of the call. Not invoked while paused.
+    var onSamples: ((UnsafePointer<Float>, Int, Double) -> Void)?
 
     // MARK: - Errors
 
@@ -186,20 +190,26 @@ final class MicCapture {
         }
 
         // Append to disk under the lock (respecting pause + post-stop guards).
-        lock.withLock {
-            guard self.running, !self.paused, let file = self.file else { return }
+        let wrote: Bool = lock.withLock {
+            guard self.running, !self.paused, let file = self.file else { return false }
             do {
                 try file.write(from: writeBuffer)
                 if self.firstHostTime == nil {
                     self.firstHostTime = hostTime
                 }
                 self.frameCount += AVAudioFramePosition(writeBuffer.frameLength)
+                return true
             } catch {
                 // A write failure is fatal for this capture; report once and stop writing.
                 self.running = false
                 self.file = nil
                 self.onFatalError?(error)
+                return false
             }
+        }
+
+        if wrote, let onSamples, let mono = writeBuffer.floatChannelData?[0] {
+            onSamples(mono, Int(writeBuffer.frameLength), writeBuffer.format.sampleRate)
         }
     }
 

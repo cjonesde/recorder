@@ -6,14 +6,16 @@ import AppKit
 /// Layout (top -> bottom):
 ///   1. Header — state badge + elapsed (mm:ss) + status line
 ///   2. Primary controls — Record (idle) OR Pause/Resume + Save + Trash (recording/paused)
+///   2b. Live transcript: streams in while recording, with a copy button and a
+///       model switcher (only shown when live transcription is enabled)
 ///   3. Two level meters — "Desktop (L)" + "Mic (R)" bound to model.desktopLevel/micLevel
 ///   4. Meetings list — title + time range, with a per-row record button; in-progress highlighted
 ///   5. Footer — Recordings folder + Settings… + Quit
 ///
-/// Preferences (your name, Gemini API key, auto-transcribe, the editable prompt,
-/// and silence auto-stop) live in a dedicated Preferences window — see
-/// `PreferencesView` / `PreferencesWindowController` — opened from the footer's
-/// "Settings…" button or ⌘,.
+/// Preferences (transcription model, language, live transcription,
+/// auto-transcribe, and silence auto-stop) live in a dedicated Preferences
+/// window (see `PreferencesView` / `PreferencesWindowController`), opened from
+/// the footer's "Settings…" button or ⌘,.
 ///
 /// Pure SwiftUI, compiles under Swift 5 language mode. Reads the shared @Observable model
 /// from the environment and never mutates audio objects directly — it only calls the
@@ -30,6 +32,11 @@ struct RecorderPanel: View {
             Divider()
 
             controls
+
+            if model.state != .idle && model.live.isSessionActive {
+                Divider()
+                liveTranscriptSection
+            }
 
             if showTranscription {
                 Divider()
@@ -212,7 +219,136 @@ struct RecorderPanel: View {
         }
     }
 
-    // MARK: - 2b. Transcription
+    // MARK: - 2b. Live transcript (while recording)
+
+    private var liveTranscriptSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Live transcript")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                modelSwitcher
+
+                Button {
+                    model.copyLiveTranscript()
+                } label: {
+                    Image(systemName: "doc.on.clipboard")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!model.live.hasText)
+                .help("Copy the transcript so far")
+            }
+
+            engineStatusLine
+
+            liveTranscriptScroll
+        }
+    }
+
+    /// Quick model switcher: same catalog as Settings, usable mid-recording
+    /// (the engine reloads and the live window catches up).
+    private var modelSwitcher: some View {
+        Menu {
+            ForEach(WhisperModelOption.catalog) { option in
+                Button {
+                    model.whisperModel = option.id
+                } label: {
+                    if option.id == model.whisperModel {
+                        Label("\(option.label) (\(option.detail))", systemImage: "checkmark")
+                    } else {
+                        Text("\(option.label) (\(option.detail))")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "cpu")
+                Text(WhisperModelOption.label(for: model.whisperModel))
+            }
+            .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Transcription model")
+    }
+
+    @ViewBuilder
+    private var engineStatusLine: some View {
+        switch model.live.engineState {
+        case .downloading(let name, let fraction):
+            HStack(spacing: 6) {
+                ProgressView(value: fraction)
+                    .controlSize(.small)
+                Text("Downloading \(WhisperModelOption.label(for: name)) model… \(Int(fraction * 100))%")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        case .loading(let name):
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading \(WhisperModelOption.label(for: name)) model…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        case .failed(let message):
+            HStack(alignment: .top, spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.caption2)
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        case .unloaded, .notDownloaded, .ready:
+            EmptyView()
+        }
+    }
+
+    private var liveTranscriptScroll: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !model.live.hasText {
+                        Text("Listening…")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    ForEach(model.live.confirmedLines) { line in
+                        (Text("[\(line.timestampLabel)] ").foregroundStyle(.secondary)
+                         + Text(line.text))
+                            .font(.caption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    if !model.live.hypothesis.isEmpty {
+                        Text(model.live.hypothesis)
+                            .font(.caption)
+                            .italic()
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Color.clear
+                        .frame(height: 1)
+                        .id("live-transcript-bottom")
+                }
+                .padding(6)
+            }
+            .frame(height: 150)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(0.04))
+            )
+            .onChange(of: model.live.revision) {
+                proxy.scrollTo("live-transcript-bottom", anchor: .bottom)
+            }
+        }
+    }
+
+    // MARK: - 2c. Transcription (post-save)
 
     private var showTranscription: Bool {
         model.transcriptionState != .idle
@@ -228,7 +364,7 @@ struct RecorderPanel: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Transcribing with Gemini…")
+                Text("Transcribing locally…")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -288,15 +424,13 @@ struct RecorderPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                 }
-                if model.apiKeyIsSet {
-                    Button {
-                        model.retryTranscription()
-                    } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                Button {
+                    model.retryTranscription()
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
     }
@@ -444,7 +578,7 @@ struct RecorderPanel: View {
                     Button { model.transcribeExisting(entry) } label: {
                         Label("Transcribe", systemImage: "text.bubble")
                     }
-                    .disabled(!model.apiKeyIsSet || model.transcriptionState == .running)
+                    .disabled(model.state != .idle || model.transcriptionState == .running)
                 }
                 if let audio = entry.audioURL {
                     Button { model.copyFileToPasteboard(audio) } label: {

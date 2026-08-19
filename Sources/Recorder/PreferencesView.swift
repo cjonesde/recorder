@@ -4,16 +4,13 @@ import SwiftUI
 ///
 /// The window itself is an AppKit `NSWindow` hosting this view — see
 /// `PreferencesWindowController` for why we don't use SwiftUI's `Settings` scene.
-/// Everything that used to live in the menu-bar panel's inline "Settings"
-/// disclosure now lives here, opened with ⌘, or the panel's "Settings…" button:
-///   - **General** — your name (transcript labelling) + silence auto-stop.
-///   - **Transcription** — Gemini API key, auto-transcribe, and the editable prompt.
+///   - **General**: silence auto-stop.
+///   - **Transcription**: on-device model, language, live transcription, and
+///     whether transcript.md is written automatically after saving.
 ///
-/// Grouped `Form`s in a `TabView` give the standard macOS System-Settings look,
-/// and the window has far more room than the 340-pt menu-bar panel (the prompt
-/// editor in particular is finally comfortable to edit). The `TabView` is given a
-/// single fixed size so the host window doesn't clip the taller (Transcription) tab
-/// or leave the window resizing as you switch tabs.
+/// Grouped `Form`s in a `TabView` give the standard macOS System-Settings look.
+/// The `TabView` is given a single fixed size so the host window doesn't clip
+/// the taller tab or leave the window resizing as you switch tabs.
 struct PreferencesView: View {
     var body: some View {
         TabView {
@@ -23,7 +20,7 @@ struct PreferencesView: View {
             TranscriptionPreferences()
                 .tabItem { Label("Transcription", systemImage: "text.bubble") }
         }
-        .frame(width: 480, height: 560)
+        .frame(width: 480, height: 460)
     }
 }
 
@@ -35,15 +32,6 @@ private struct GeneralPreferences: View {
     var body: some View {
         @Bindable var model = model
         Form {
-            Section {
-                TextField("Your name", text: $model.localSpeakerName, prompt: Text("Optional"))
-                Text("Labels your voice — the microphone, on the right channel — when the transcript guesses who said what. Leave blank to omit.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Your name")
-            }
-
             Section {
                 Toggle("Stop automatically after silence", isOn: $model.silenceAutoStopEnabled)
 
@@ -86,143 +74,91 @@ private struct GeneralPreferences: View {
 private struct TranscriptionPreferences: View {
     @Environment(RecorderModel.self) private var model
 
-    /// Draft text for the API-key SecureField (never stored in the model).
-    @State private var keyDraft = ""
-    /// Reveal the key field even when a key is already stored (for "Replace").
-    @State private var showKeyField = false
-    /// Working copy for the prompt editor; committed to the model on blur / close
-    /// so we don't rewrite UserDefaults on every keystroke.
-    @State private var promptDraft = ""
-    @FocusState private var promptFocused: Bool
-
     var body: some View {
         @Bindable var model = model
         Form {
             Section {
-                apiKeyRow
+                Picker("Model", selection: $model.whisperModel) {
+                    ForEach(WhisperModelOption.catalog) { option in
+                        Text("\(option.label) · \(option.detail)").tag(option.id)
+                    }
+                }
+                engineStatus
             } header: {
-                Text("Gemini API key")
+                Text("On-device model")
             } footer: {
-                Text("Stored in the macOS Keychain — never written to disk in plaintext.")
+                Text("Runs fully on this Mac via WhisperKit (CoreML). Each model is downloaded once from Hugging Face into Application Support; switching later is instant. All listed models handle German and English.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                Toggle("Transcribe automatically with Gemini after saving", isOn: $model.autoTranscribe)
-                    .disabled(!model.apiKeyIsSet)
-                Text(model.apiKeyIsSet
-                     ? "Each recording is transcribed as soon as it's saved."
-                     : "Add an API key above to enable transcription.")
+                Picker("Language", selection: $model.transcriptionLanguage) {
+                    ForEach(TranscriptionLanguage.options, id: \.id) { option in
+                        Text(option.label).tag(option.id)
+                    }
+                }
+                Text("Auto-detect re-checks the language for every window, which handles meetings that mix languages.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("Automatic transcription")
+                Text("Language")
             }
 
             Section {
-                promptEditor
+                Toggle("Stream the transcript live while recording", isOn: $model.liveTranscriptionEnabled)
+                Text("Shows the transcript in the panel as it is spoken, with a copy button. Uses more CPU while recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } header: {
-                Text("Prompt")
+                Text("Live transcription")
+            }
+
+            Section {
+                Toggle("Save transcript.md automatically after saving", isOn: $model.autoTranscribe)
+                Text("Writes the live transcript next to the audio. When live transcription was off, the saved audio is transcribed instead.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("After saving")
             }
         }
         .formStyle(.grouped)
-        .onAppear { promptDraft = model.promptTemplate }
-        .onDisappear { commitPromptDraft() }
     }
-
-    // MARK: API key
 
     @ViewBuilder
-    private var apiKeyRow: some View {
-        if model.apiKeyIsSet && !showKeyField {
+    private var engineStatus: some View {
+        switch model.live.engineState {
+        case .downloading(let name, let fraction):
             HStack(spacing: 8) {
-                Label("Stored in Keychain", systemImage: "key.fill")
+                ProgressView(value: fraction)
+                    .controlSize(.small)
+                Text("Downloading \(WhisperModelOption.label(for: name))… \(Int(fraction * 100))%")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                Spacer()
-                Button("Replace") { showKeyField = true }
-                Button("Remove", role: .destructive) { model.clearAPIKey() }
             }
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                if !model.apiKeyIsSet {
-                    Text("Paste a Google AI Studio key to enable transcription.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 6) {
-                    SecureField("AIza…", text: $keyDraft)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Save") {
-                        model.saveAPIKey(keyDraft)
-                        keyDraft = ""
-                        showKeyField = false
-                    }
-                    .disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if showKeyField {
-                        Button("Cancel") {
-                            keyDraft = ""
-                            showKeyField = false
-                        }
-                    }
-                }
+        case .loading(let name):
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading \(WhisperModelOption.label(for: name))…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    // MARK: Prompt editor
-
-    private var promptEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            (Text("The placeholders ")
-             + Text("{{CHANNEL_LAYOUT}}").bold().monospaced()
-             + Text(" and ")
-             + Text("{{CONTEXT}}").bold().monospaced()
-             + Text(" are filled in automatically with the stereo layout, your name, and the meeting's title + attendees."))
+        case .ready:
+            Label("Model loaded and ready", systemImage: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            TextEditor(text: $promptDraft)
-                .font(.system(.caption, design: .monospaced))
-                .frame(minHeight: 260)
-                .focused($promptFocused)
-                .padding(4)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
-                .onChange(of: promptFocused) { _, focused in
-                    if !focused { commitPromptDraft() }
-                }
-
-            HStack {
-                if model.promptTemplateIsCustomized {
-                    Label("Customized", systemImage: "pencil")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Using the built-in prompt.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Reset to default") {
-                    model.resetPromptTemplate()
-                    promptDraft = model.promptTemplate
-                }
-                .disabled(!model.promptTemplateIsCustomized)
-            }
+        case .notDownloaded:
+            Label("Downloads when you start recording or transcribing", systemImage: "arrow.down.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .unloaded:
+            EmptyView()
         }
-    }
-
-    /// Push the editor's working copy into the model (and thus UserDefaults).
-    /// A blank draft normalizes back to the default so the "Customized" state and
-    /// the actual transcription prompt never disagree.
-    private func commitPromptDraft() {
-        let trimmed = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolved = trimmed.isEmpty ? GeminiTranscriber.defaultPromptTemplate : promptDraft
-        if model.promptTemplate != resolved { model.promptTemplate = resolved }
-        if promptDraft != resolved { promptDraft = resolved }
     }
 }

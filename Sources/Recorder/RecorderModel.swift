@@ -18,13 +18,12 @@ final class RecorderModel {
     var elapsed: TimeInterval = 0
     var statusMessage: String? = nil
 
+    /// On-device transcription engine (WhisperKit). Exposed so the panel can
+    /// render the live transcript and engine status directly.
+    let live = LocalTranscriptionEngine()
+
     // MARK: - Persisted preferences (mirrored to UserDefaults via Preferences)
 
-    /// Your name — labels the local (mic / right-channel) voice in transcripts.
-    /// Empty = omit. Replaces the old hardcoded speaker name.
-    var localSpeakerName: String = "" {
-        didSet { Preferences.speakerName = localSpeakerName }
-    }
     /// Auto-stop after this many seconds of two-channel silence.
     var silenceTimeout: TimeInterval = 300 {
         didSet { Preferences.silenceTimeout = silenceTimeout }
@@ -37,26 +36,38 @@ final class RecorderModel {
     var silenceAutoStopEnabled: Bool = true {
         didSet { Preferences.silenceAutoStop = silenceAutoStopEnabled }
     }
-    /// Whether to transcribe automatically after a recording is saved.
+    /// Whether to write transcript.md automatically after a recording is saved.
     var autoTranscribe: Bool = true {
         didSet { Preferences.autoTranscribe = autoTranscribe }
     }
-    /// Editable Gemini prompt. Holds the *effective* text (built-in default until
-    /// the user customizes it). Persisted as empty when it matches the default so
-    /// default-prompt improvements still propagate (see `Preferences.promptTemplate`).
-    var promptTemplate: String = GeminiTranscriber.defaultPromptTemplate {
+    /// Selected on-device Whisper model. Changing it loads (and downloads,
+    /// when missing) the new model immediately, even mid-recording.
+    var whisperModel: String = WhisperModelOption.defaultModelID {
         didSet {
-            Preferences.promptTemplate =
-                (promptTemplate == GeminiTranscriber.defaultPromptTemplate) ? "" : promptTemplate
+            Preferences.whisperModel = whisperModel
+            guard oldValue != whisperModel else { return }
+            let name = whisperModel
+            Task { [weak self] in
+                await self?.live.loadModel(name, downloadIfNeeded: true)
+            }
         }
+    }
+    /// Transcription language: ISO code or "auto".
+    var transcriptionLanguage: String = "auto" {
+        didSet {
+            Preferences.language = transcriptionLanguage
+            live.language = transcriptionLanguage == "auto" ? nil : transcriptionLanguage
+        }
+    }
+    /// Whether the transcript streams into the panel while recording.
+    var liveTranscriptionEnabled: Bool = true {
+        didSet { Preferences.liveTranscription = liveTranscriptionEnabled }
     }
 
     // Transcription (post-save).
     var transcriptionState: TranscriptionState = .idle
     var lastTranscriptText: String? = nil
     var lastTranscriptURL: URL? = nil
-    /// Whether a Gemini API key is available in the Keychain.
-    var apiKeyIsSet: Bool = false
 
     /// The most recent recordings on disk (loaded at launch + after changes).
     var recentRecordings: [RecordingEntry] = []
@@ -67,14 +78,13 @@ final class RecorderModel {
     @ObservationIgnored private let mic = MicCapture()
     @ObservationIgnored private let calendar = CalendarAccess()
     @ObservationIgnored private let notifications = NotificationManager()
-    @ObservationIgnored private let transcriber = GeminiTranscriber()
     @ObservationIgnored private var silenceMonitor: SilenceMonitor?
 
     @ObservationIgnored private var elapsedTimer: Timer?
     @ObservationIgnored private var recordingStartedAt: Date?
 
     /// The meeting (if any) the current recording is attached to — kept so its
-    /// title + attendees are available as transcription context at save time.
+    /// title + attendees are available as transcript context at save time.
     @ObservationIgnored private var activeMeeting: Meeting?
 
     /// Everything needed to (re)run a transcription, captured at save time.
@@ -92,16 +102,6 @@ final class RecorderModel {
     func onAppear() {
         // Load persisted preferences first so the UI reflects them immediately.
         loadPreferences()
-
-        // Seed the Keychain from GEMINI_API_KEY on first run (handy when the app is
-        // launched from a shell that has the key exported; GUI launches won't inherit
-        // it, so the Keychain is the durable store thereafter).
-        if GeminiKeychain.read() == nil,
-           let env = ProcessInfo.processInfo.environment["GEMINI_API_KEY"],
-           !env.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            GeminiKeychain.save(env)
-        }
-        apiKeyIsSet = GeminiKeychain.read() != nil
 
         // Load prior recordings from disk so they survive restarts.
         refreshRecordings()
@@ -143,30 +143,35 @@ final class RecorderModel {
                 self?.statusMessage = "Mic error: \(error.localizedDescription)"
             }
         }
+
+        // Feed both captures into the live-transcription inbox. The inbox is a
+        // no-op outside an active session, so the hooks stay wired permanently.
+        let inbox = live.inbox
+        tap.onSamples = { samples, count, rate in
+            inbox.ingest(.desktop, samples, count: count, rate: rate)
+        }
+        mic.onSamples = { samples, count, rate in
+            inbox.ingest(.mic, samples, count: count, rate: rate)
+        }
+
+        // Load the selected model into memory if it is already on disk; a
+        // missing model downloads on first use instead of at launch.
+        let name = whisperModel
+        Task { [weak self] in
+            await self?.live.loadModel(name, downloadIfNeeded: false)
+        }
     }
 
     /// Pull persisted preferences into the observable properties. The `didSet`
     /// write-backs are idempotent (same value in → same value out).
     private func loadPreferences() {
-        localSpeakerName = Preferences.speakerName
         silenceTimeout = Preferences.silenceTimeout
         silenceThresholdDB = Preferences.silenceThresholdDB
         silenceAutoStopEnabled = Preferences.silenceAutoStop
         autoTranscribe = Preferences.autoTranscribe
-        let storedTemplate = Preferences.promptTemplate
-        promptTemplate = storedTemplate.isEmpty ? GeminiTranscriber.defaultPromptTemplate : storedTemplate
-    }
-
-    /// Whether the prompt differs from the built-in default (drives the Reset button).
-    /// Blank counts as "not customized" — it transcribes with the default anyway.
-    var promptTemplateIsCustomized: Bool {
-        let trimmed = promptTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && promptTemplate != GeminiTranscriber.defaultPromptTemplate
-    }
-
-    /// Restore the built-in Gemini prompt.
-    func resetPromptTemplate() {
-        promptTemplate = GeminiTranscriber.defaultPromptTemplate
+        whisperModel = Preferences.whisperModel
+        transcriptionLanguage = Preferences.language
+        liveTranscriptionEnabled = Preferences.liveTranscription
     }
 
     // MARK: - Recording control
@@ -237,6 +242,14 @@ final class RecorderModel {
 
         silenceMonitor?.start()
 
+        if liveTranscriptionEnabled {
+            live.beginSession()
+            let name = whisperModel
+            Task { [weak self] in
+                await self?.live.loadModel(name, downloadIfNeeded: true)
+            }
+        }
+
         // Schedule a meeting-end alert when recording a known meeting.
         if let meeting {
             notifications.scheduleMeetingEndAlert(at: meeting.end, meetingTitle: meeting.title)
@@ -277,7 +290,6 @@ final class RecorderModel {
         state = .idle
         statusMessage = "Mixing…"
 
-        // Mix off the main actor; keep raw CAFs regardless of outcome.
         let outputURL = session.outputURL
         let desktopURL = session.desktopURL
         let micURL = session.micURL
@@ -285,7 +297,26 @@ final class RecorderModel {
         let startedAt = session.startedAt
         let meetingTitle = activeMeeting?.title ?? session.meetingTitle
         let attendees = activeMeeting?.attendees ?? []
+        let pending = PendingTranscription(
+            audioURL: outputURL,
+            folderURL: folderURL,
+            meetingTitle: meetingTitle,
+            attendees: attendees,
+            startedAt: startedAt
+        )
+
+        // Finalize the live transcript (transcribes the remaining tail) in
+        // parallel with the mix; both results are joined below.
+        let liveTask: Task<String, Never>? = live.isSessionActive
+            ? Task { [live] in await live.endSession() }
+            : nil
+        if autoTranscribe {
+            transcriptionState = .running
+        }
+
+        // Mix off the main actor; keep raw CAFs regardless of outcome.
         Task.detached(priority: .utility) {
+            var mixError: Error? = nil
             do {
                 try StereoMixer.mix(
                     desktopURL: desktopURL,
@@ -294,31 +325,36 @@ final class RecorderModel {
                     micResult: micResult,
                     outputURL: outputURL
                 )
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    let pending = PendingTranscription(
-                        audioURL: outputURL,
-                        folderURL: folderURL,
-                        meetingTitle: meetingTitle,
-                        attendees: attendees,
-                        startedAt: startedAt
-                    )
-                    if self.autoTranscribe {
-                        self.statusMessage = "Saved \(outputURL.lastPathComponent)"
-                        // Chain transcription off the successful mix.
-                        self.startTranscription(pending)
-                    } else {
-                        // Auto-transcribe off: keep the recording; the user can
-                        // transcribe it later from the Recent list.
-                        self.lastTranscription = pending
-                        self.transcriptionState = .idle
+            } catch {
+                mixError = error
+            }
+
+            let liveBody = await liveTask?.value
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.lastTranscription = pending
+                self.statusMessage = mixError == nil
+                    ? "Saved \(outputURL.lastPathComponent)"
+                    : "Mix failed (raw files kept): \(mixError!.localizedDescription)"
+                self.refreshRecordings()
+
+                guard self.autoTranscribe else {
+                    self.transcriptionState = .idle
+                    if mixError == nil {
                         self.statusMessage = "Saved \(outputURL.lastPathComponent) · transcription off"
                     }
-                    self.refreshRecordings()
+                    return
                 }
-            } catch {
-                await MainActor.run { [weak self] in
-                    self?.statusMessage = "Mix failed (raw files kept): \(error.localizedDescription)"
+
+                if let liveBody, !liveBody.isEmpty {
+                    self.writeTranscript(body: liveBody, pending: pending, keepStatus: mixError != nil)
+                } else if mixError == nil {
+                    self.startTranscription(pending)
+                } else {
+                    self.transcriptionState = .failed(
+                        "No live transcript, and the audio mix failed, so there is nothing to transcribe."
+                    )
                 }
             }
         }
@@ -336,6 +372,7 @@ final class RecorderModel {
 
         _ = tap.stop()
         _ = mic.stop()
+        live.cancelSession()
 
         cancelTimersAndAlerts()
 
@@ -363,7 +400,7 @@ final class RecorderModel {
     /// The meeting currently in progress, if any. All-day events are already
     /// excluded from `meetings`, so this only matches timed meetings. Used as the
     /// default target for the main Record button so recording while you're in a
-    /// meeting auto-tags it (folder name + end alert + transcription context).
+    /// meeting auto-tags it (folder name + end alert + transcript context).
     var currentMeeting: Meeting? {
         let now = Date()
         return meetings.first(where: { $0.isInProgress(now) })
@@ -410,103 +447,79 @@ final class RecorderModel {
 
     // MARK: - Transcription
 
-    /// Resolve the Gemini key: Keychain first, then the process environment.
-    private func resolvedAPIKey() -> String? {
-        if let stored = GeminiKeychain.read() { return stored }
-        if let env = ProcessInfo.processInfo.environment["GEMINI_API_KEY"] {
-            let trimmed = env.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return nil
-    }
-
-    /// Save/replace the Gemini API key in the Keychain. If a transcription was
-    /// waiting on a key, it starts immediately.
-    func saveAPIKey(_ raw: String) {
-        guard GeminiKeychain.save(raw) else {
-            statusMessage = "Could not store the API key in the Keychain."
-            return
-        }
-        apiKeyIsSet = true
-        statusMessage = "API key saved"
-        if case .failed = transcriptionState, let pending = lastTranscription {
-            startTranscription(pending)
-        }
-    }
-
-    /// Remove the stored Gemini API key.
-    func clearAPIKey() {
-        GeminiKeychain.delete()
-        apiKeyIsSet = false
-        statusMessage = "API key removed"
-    }
-
-    /// Re-run the last transcription (after a failure or a freshly entered key).
+    /// Re-run the last transcription (offline, from the saved audio).
     func retryTranscription() {
         guard let pending = lastTranscription else { return }
         startTranscription(pending)
     }
 
+    /// Transcribe a saved recording's audio with the local model.
     private func startTranscription(_ pending: PendingTranscription) {
         lastTranscription = pending
         lastTranscriptText = nil
         lastTranscriptURL = nil
 
-        guard let key = resolvedAPIKey() else {
-            transcriptionState = .failed("No Gemini API key set — add one in Settings to transcribe.")
-            statusMessage = "Saved (no API key — transcription skipped)"
-            return
-        }
-
         transcriptionState = .running
-        statusMessage = "Transcribing…"
+        statusMessage = "Transcribing locally…"
 
-        var transcriber = self.transcriber
-        transcriber.promptTemplate =
-            promptTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? GeminiTranscriber.defaultPromptTemplate : promptTemplate
-        let trimmedName = localSpeakerName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let context = GeminiTranscriber.Context(
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let body = try await self.live.transcribeFile(pending.audioURL)
+                guard !body.isEmpty else {
+                    self.transcriptionState = .failed("The model returned an empty transcript (silent audio?).")
+                    self.statusMessage = "Transcription produced no text"
+                    return
+                }
+                self.writeTranscript(body: body, pending: pending, keepStatus: false)
+            } catch {
+                let message = RecorderModel.describeTranscriptionError(error)
+                self.transcriptionState = .failed(message)
+                self.statusMessage = "Transcription failed"
+            }
+        }
+    }
+
+    /// Compose the transcript document, write it to transcript.md, and update
+    /// the UI state. `keepStatus` leaves the status line untouched (used when a
+    /// mix failure message must stay visible).
+    private func writeTranscript(body: String, pending: PendingTranscription, keepStatus: Bool) {
+        let document = RecorderModel.composeTranscriptDocument(
+            markdown: body,
             meetingTitle: pending.meetingTitle,
             attendees: pending.attendees,
             startedAt: pending.startedAt,
-            localSpeakerName: trimmedName.isEmpty ? nil : trimmedName
+            audioName: pending.audioURL.lastPathComponent,
+            model: live.modelName
         )
-
-        Task { [weak self] in
-            do {
-                let markdown = try await transcriber.transcribe(
-                    audioURL: pending.audioURL,
-                    apiKey: key,
-                    context: context
-                )
-                let document = RecorderModel.composeTranscriptDocument(
-                    markdown: markdown,
-                    meetingTitle: pending.meetingTitle,
-                    attendees: pending.attendees,
-                    startedAt: pending.startedAt,
-                    audioName: pending.audioURL.lastPathComponent,
-                    model: transcriber.model
-                )
-                let transcriptURL = pending.folderURL.appendingPathComponent("transcript.md")
-                try document.write(to: transcriptURL, atomically: true, encoding: .utf8)
-                await MainActor.run {
-                    guard let self else { return }
-                    self.lastTranscriptText = document
-                    self.lastTranscriptURL = transcriptURL
-                    self.transcriptionState = .done(transcriptURL)
-                    self.statusMessage = "Transcript saved (transcript.md)"
-                    self.refreshRecordings()
-                }
-            } catch {
-                let message = RecorderModel.describeTranscriptionError(error)
-                await MainActor.run {
-                    guard let self else { return }
-                    self.transcriptionState = .failed(message)
-                    self.statusMessage = "Transcription failed"
-                }
-            }
+        let transcriptURL = pending.folderURL.appendingPathComponent("transcript.md")
+        do {
+            try document.write(to: transcriptURL, atomically: true, encoding: .utf8)
+        } catch {
+            transcriptionState = .failed("Could not write transcript.md: \(error.localizedDescription)")
+            return
         }
+        lastTranscriptText = document
+        lastTranscriptURL = transcriptURL
+        transcriptionState = .done(transcriptURL)
+        if !keepStatus {
+            statusMessage = "Transcript saved (transcript.md)"
+        }
+        refreshRecordings()
+    }
+
+    /// Copy the live transcript (confirmed lines + current hypothesis) while
+    /// a recording is running.
+    func copyLiveTranscript() {
+        let text = live.transcript(includeHypothesis: true)
+        guard !text.isEmpty else {
+            statusMessage = "Nothing transcribed yet"
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        statusMessage = "Live transcript copied"
     }
 
     /// Copy the transcript text to the clipboard.
@@ -587,7 +600,7 @@ final class RecorderModel {
         NSWorkspace.shared.open(root)
     }
 
-    /// Wrap the model's Markdown with a small header (title / date / attendees).
+    /// Wrap the transcript body with a small header (title / date / attendees).
     private static func composeTranscriptDocument(
         markdown: String,
         meetingTitle: String?,
@@ -611,9 +624,9 @@ final class RecorderModel {
             lines.append("- **Invited attendees:** \(attendees.joined(separator: ", "))")
         }
         lines.append("- **Audio:** `\(audioName)`")
-        lines.append("- **Model:** Gemini `\(model)`")
+        lines.append("- **Model:** WhisperKit `\(model)` (on-device)")
         lines.append("")
-        lines.append("> Channel layout — left = desktop/system audio, right = microphone.")
+        lines.append("> Transcribed locally. Speakers are not labeled; in the audio, left = desktop/system audio, right = microphone.")
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -623,12 +636,12 @@ final class RecorderModel {
     }
 
     private static func describeTranscriptionError(_ error: Error) -> String {
-        if let e = error as? GeminiTranscriber.TranscriberError {
+        if let e = error as? LocalTranscriptionEngine.EngineError {
             return e.errorDescription ?? "Transcription failed."
         }
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain {
-            return "Network error: \(ns.localizedDescription)"
+            return "Network error while fetching the model: \(ns.localizedDescription)"
         }
         return error.localizedDescription
     }

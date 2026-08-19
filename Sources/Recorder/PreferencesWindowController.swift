@@ -13,9 +13,8 @@ import SwiftUI
 /// and needs no policy juggling.
 ///
 /// The window is rebuilt from scratch each time it's opened (we drop our reference
-/// when it closes), so `PreferencesView`'s `@State` — notably the prompt editor's
-/// working draft — is always re-seeded from the model and can never show a stale
-/// copy on reopen.
+/// when it closes), so `PreferencesView`'s state is always re-seeded from the
+/// model and can never show a stale copy on reopen.
 @MainActor
 final class PreferencesWindowController: NSObject, NSWindowDelegate {
     static let shared = PreferencesWindowController()

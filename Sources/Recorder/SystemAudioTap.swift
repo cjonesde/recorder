@@ -31,6 +31,11 @@ final class SystemAudioTap {
     var onLevelDB: ((Float) -> Void)?
     /// Called on an arbitrary thread on a fatal, unrecoverable error.
     var onFatalError: ((Error) -> Void)?
+    /// Mono desktop samples as they are flushed to disk, with the capture sample
+    /// rate. Called on the background writer thread (never the realtime IOProc);
+    /// the pointer is only valid for the duration of the call. Pause is honored
+    /// upstream: the IOProc stops enqueueing while paused.
+    var onSamples: ((UnsafePointer<Float>, Int, Double) -> Void)?
 
     // MARK: - Errors
 
@@ -535,6 +540,7 @@ final class SystemAudioTap {
                     do {
                         try file.write(from: buffer)
                         self?.capturedFrames += AVAudioFramePosition(n)
+                        self?.onSamples?(dst, n, writeFormat.sampleRate)
                     } catch {
                         self?.onFatalError?(error)
                     }
