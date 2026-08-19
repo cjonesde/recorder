@@ -22,6 +22,11 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        .testTarget(
+            name: "RecorderTests",
+            dependencies: ["Recorder"],
+            path: "Tests/RecorderTests"
         )
     ]
 )

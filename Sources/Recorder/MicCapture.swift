@@ -77,6 +77,35 @@ final class MicCapture {
     /// Whether a tap is currently installed / engine running.
     private var running = false
 
+    /// Mono Float32 format at the current hardware rate, used to downmix a
+    /// multi-channel input buffer. Re-derived whenever the route changes.
+    private var downmixFormat: AVAudioFormat?
+
+    /// Converts mono input to `sampleRate`, the file's rate pinned at `start`, when the
+    /// hardware renegotiates mid-recording.
+    private var resampler: RealtimeResampler?
+
+    /// Reusable canonical-rate destination for `resampler` output.
+    private var resampleBuffer: AVAudioPCMBuffer?
+
+    // MARK: - Route changes
+
+    private var configObserver: NSObjectProtocol?
+
+    /// Serializes reconfiguration against itself; `running` guards it against `stop`.
+    private let reconfigureQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.name = "com.tobi.Recorder.MicCapture.reconfigure"
+        return queue
+    }()
+
+    private static let tapBufferSize: AVAudioFrameCount = 4096
+
+    private static let resampleCapacity: AVAudioFrameCount = 32_768
+
+    private static let log = Logger(subsystem: "com.tobi.Recorder", category: "MicCapture")
+
     // MARK: - Authorization
 
     /// Checks / requests microphone (audio) capture permission.
@@ -133,20 +162,42 @@ final class MicCapture {
             throw MicError.couldNotCreateFile(url, underlying: error)
         }
 
+        let canonicalRate = inputFormat.sampleRate
+        let converter = RealtimeResampler(outputRate: canonicalRate)
+        converter.reset(inputRate: inputFormat.sampleRate)
+
+        guard let scratch = AVAudioPCMBuffer(
+            pcmFormat: monoFormat,
+            frameCapacity: Self.resampleCapacity
+        ) else {
+            throw MicError.invalidInputFormat
+        }
+
         // Reset shared state under the lock before the tap can fire.
         lock.withLock {
             self.file = outFile
             self.paused = false
             self.firstHostTime = nil
-            self.sampleRate = inputFormat.sampleRate
+            self.sampleRate = canonicalRate
             self.frameCount = 0
             self.running = true
+            self.downmixFormat = monoFormat
+            self.resampler = converter
+            self.resampleBuffer = scratch
+        }
+
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: reconfigureQueue
+        ) { [weak self] _ in
+            self?.handleConfigurationChange()
         }
 
         // Install the tap on the INPUT format (passing `nil` lets the engine use the
         // node's own format, which is exactly inputFormat). Buffer size 4096 per contract.
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, when in
-            self?.handleBuffer(buffer, when: when, monoFormat: monoFormat)
+        inputNode.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: inputFormat) { [weak self] buffer, when in
+            self?.handleBuffer(buffer, when: when)
         }
 
         engine.prepare()
@@ -155,18 +206,89 @@ final class MicCapture {
         } catch {
             // Roll back so a failed start leaves us in a clean state.
             inputNode.removeTap(onBus: 0)
+            removeConfigObserver()
             lock.withLock {
                 self.file = nil
                 self.running = false
+                self.downmixFormat = nil
+                self.resampler = nil
+                self.resampleBuffer = nil
             }
             throw error
+        }
+    }
+
+    private func removeConfigObserver() {
+        if let configObserver {
+            NotificationCenter.default.removeObserver(configObserver)
+        }
+        configObserver = nil
+    }
+
+    /// Re-read the hardware format, retarget the resampler and reinstall the tap. Runs
+    /// serialized on `reconfigureQueue`, with the tap removed first so conversion state
+    /// is only mutated while no buffers can arrive.
+    private func handleConfigurationChange() {
+        guard lock.withLock({ running }) else { return }
+
+        let inputNode = engine.inputNode
+        inputNode.removeTap(onBus: 0)
+
+        let newFormat = inputNode.inputFormat(forBus: 0)
+        guard newFormat.channelCount > 0, newFormat.sampleRate > 0,
+              let newDownmix = AVAudioFormat(
+                  commonFormat: .pcmFormatFloat32,
+                  sampleRate: newFormat.sampleRate,
+                  channels: 1,
+                  interleaved: false
+              )
+        else {
+            Self.log.error("mic route changed to an unusable format; capture cannot continue")
+            lock.withLock { self.running = false }
+            onFatalError?(MicError.invalidInputFormat)
+            return
+        }
+
+        let canonical: Double = lock.withLock {
+            self.downmixFormat = newDownmix
+            self.resampler?.reset(inputRate: newFormat.sampleRate)
+            return self.sampleRate
+        }
+
+        if newFormat.sampleRate != canonical {
+            Self.log.warning(
+                "mic route changed to \(newFormat.sampleRate, privacy: .public) Hz; resampling to the recording's \(canonical, privacy: .public) Hz"
+            )
+        } else {
+            Self.log.info("mic route changed, rate unchanged at \(canonical, privacy: .public) Hz")
+        }
+
+        inputNode.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: newFormat) { [weak self] buffer, when in
+            self?.handleBuffer(buffer, when: when)
+        }
+
+        engine.prepare()
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                Self.log.error("mic engine restart after route change failed: \(error.localizedDescription)")
+                lock.withLock { self.running = false }
+                onFatalError?(error)
+                return
+            }
+        }
+
+        if !lock.withLock({ running }) {
+            inputNode.removeTap(onBus: 0)
+            engine.stop()
         }
     }
 
     // MARK: - Real-time tap block
 
     /// Called on a real-time audio thread for every captured buffer.
-    private func handleBuffer(_ buffer: AVAudioPCMBuffer, when: AVAudioTime, monoFormat: AVAudioFormat) {
+    private func handleBuffer(_ buffer: AVAudioPCMBuffer, when: AVAudioTime) {
         // Always compute a meter level, even while paused, so the UI keeps moving.
         let db = RMSMeter.dBFS(buffer)
         onLevelDB?(db)
@@ -174,22 +296,48 @@ final class MicCapture {
         // Determine the host time of this buffer (mach_absolute_time domain).
         let hostTime = when.isHostTimeValid ? when.hostTime : mach_absolute_time()
 
-        // Build (or reuse) a mono buffer to write. If the input is already mono we can
-        // write the incoming buffer directly; otherwise we downmix by averaging.
-        let frames = buffer.frameLength
-        guard frames > 0 else { return }
+        guard buffer.frameLength > 0 else { return }
 
-        let writeBuffer: AVAudioPCMBuffer
+        let (isRunning, monoFormat, resampler, scratch) = lock.withLock {
+            (self.running, self.downmixFormat, self.resampler, self.resampleBuffer)
+        }
+        guard isRunning, let monoFormat else { return }
+
+        let monoSource: AVAudioPCMBuffer
         if buffer.format.channelCount == 1 && buffer.format.commonFormat == .pcmFormatFloat32 {
-            writeBuffer = buffer
+            monoSource = buffer
         } else if let mono = MicCapture.downmixToMono(buffer, monoFormat: monoFormat) {
-            writeBuffer = mono
+            monoSource = mono
         } else {
             // Format we can't handle (e.g. non-Float32 and downmix failed); skip safely.
             return
         }
+        guard let src = monoSource.floatChannelData?[0] else { return }
 
-        // Append to disk under the lock (respecting pause + post-stop guards).
+        guard let resampler, !resampler.isPassThrough,
+              let scratch, let dst = scratch.floatChannelData?[0]
+        else {
+            write(monoSource, hostTime: hostTime)
+            return
+        }
+
+        let capacity = Int(scratch.frameCapacity)
+        let chunkLimit = max(1, resampler.maxInputFrames(forOutputCapacity: capacity))
+        let frames = Int(monoSource.frameLength)
+        var offset = 0
+        while offset < frames {
+            let chunk = min(frames - offset, chunkLimit)
+            let written = resampler.process(src + offset, count: chunk, into: dst, capacity: capacity)
+            if written > 0 {
+                scratch.frameLength = AVAudioFrameCount(written)
+                write(scratch, hostTime: hostTime)
+            }
+            offset += chunk
+        }
+    }
+
+    /// Append one canonical-rate mono buffer to disk and forward it to `onSamples`.
+    private func write(_ writeBuffer: AVAudioPCMBuffer, hostTime: UInt64) {
         let wrote: Bool = lock.withLock {
             guard self.running, !self.paused, let file = self.file else { return false }
             do {
@@ -259,6 +407,9 @@ final class MicCapture {
 
     /// Stop the engine, finalize the file, and return what was captured.
     func stop() -> CaptureResult {
+        removeConfigObserver()
+        reconfigureQueue.waitUntilAllOperationsAreFinished()
+
         // Stop the running graph first so no more buffers arrive after we drop the file.
         if engine.isRunning {
             engine.inputNode.removeTap(onBus: 0)
@@ -277,6 +428,9 @@ final class MicCapture {
             )
             self.running = false
             self.file = nil   // releasing the AVAudioFile finalizes the CAF on disk
+            self.downmixFormat = nil
+            self.resampler = nil
+            self.resampleBuffer = nil
             return result
         }
     }

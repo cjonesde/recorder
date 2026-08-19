@@ -166,6 +166,21 @@ final class SampleInbox: @unchecked Sendable {
     private var blockSumSq: [Float] = [0, 0]
     private var blockFill = 0
 
+    /// Silence inserted per source to keep the two channels index-aligned. Always zero
+    /// in healthy operation; a non-zero count means that capture delivered fewer
+    /// samples than its declared rate promised.
+    private var padded: [Int] = [0, 0]
+    private var lastLoggedPadding: [Int] = [0, 0]
+
+    private static let log = Logger(subsystem: "com.tobi.Recorder", category: "SampleInbox")
+
+    private static let paddingLogInterval = Int(targetRate)
+
+    /// Silence inserted for `source` during the current session.
+    func paddedSamples(for source: Source) -> Int {
+        padded[source.rawValue]
+    }
+
     private static let timebase: mach_timebase_info_data_t = {
         var tb = mach_timebase_info_data_t()
         mach_timebase_info(&tb)
@@ -189,6 +204,8 @@ final class SampleInbox: @unchecked Sendable {
         carry = [[], []]
         blockSumSq = [0, 0]
         blockFill = 0
+        padded = [0, 0]
+        lastLoggedPadding = [0, 0]
     }
 
     func end() {
@@ -255,8 +272,10 @@ final class SampleInbox: @unchecked Sendable {
             let skew = carry[0].count - carry[1].count
             if skew > Self.skewCapSamples {
                 carry[1].append(contentsOf: repeatElement(0, count: skew))
+                notePadding(.mic, samples: skew)
             } else if -skew > Self.skewCapSamples {
                 carry[0].append(contentsOf: repeatElement(0, count: -skew))
+                notePadding(.desktop, samples: -skew)
             }
             let n = min(carry[0].count, carry[1].count)
             if n > 0 {
@@ -285,6 +304,20 @@ final class SampleInbox: @unchecked Sendable {
             emitEnergyBlock(into: &out)
         }
         return out
+    }
+
+    /// Record silence inserted to realign a starved channel, and report it in the log.
+    private func notePadding(_ source: Source, samples: Int) {
+        guard samples > 0 else { return }
+        let i = source.rawValue
+        padded[i] += samples
+        guard padded[i] - lastLoggedPadding[i] >= Self.paddingLogInterval else { return }
+        lastLoggedPadding[i] = padded[i]
+        let name = source == .desktop ? "desktop" : "mic"
+        let seconds = Double(padded[i]) / Self.targetRate
+        Self.log.warning(
+            "\(name, privacy: .public) capture is behind: padded \(seconds, privacy: .public)s of silence to realign channels — that capture is delivering fewer samples than its declared rate"
+        )
     }
 
     /// Close the current (possibly partial) energy block. Consumer-side; only

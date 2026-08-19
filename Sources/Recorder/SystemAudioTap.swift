@@ -111,6 +111,12 @@ final class SystemAudioTap {
     /// per-callback allocation). Sized to comfortably exceed any IO buffer.
     private var scratch: UnsafeMutablePointer<Float>?
     private let scratchCapacity = 16_384
+    /// Converts incoming buffers to `writeFormat`'s rate when a rebuilt tap comes back
+    /// at a different one. Only mutated while the IOProc is stopped.
+    private var resampler: RealtimeResampler?
+    /// Preallocated destination for `resampler` output.
+    private var resampleScratch: UnsafeMutablePointer<Float>?
+    private let resampleCapacity = 16_384
     /// Background thread that drains `ring` to `file`.
     private var writerThread: Thread?
     /// Set true by `stop()` to tell the writer to drain and exit.
@@ -216,6 +222,10 @@ final class SystemAudioTap {
         let newRing = FloatRingBuffer(capacityFrames: ringFrames)
         self.ring = newRing
         self.scratch = UnsafeMutablePointer<Float>.allocate(capacity: scratchCapacity)
+        self.resampleScratch = UnsafeMutablePointer<Float>.allocate(capacity: resampleCapacity)
+        let newResampler = RealtimeResampler(outputRate: writeFmt.sampleRate)
+        newResampler.reset(inputRate: built.tapFormat.sampleRate)
+        self.resampler = newResampler
         writerShouldStop.withLock { $0 = false }
         startWriterThread(file: self.file!, writeFormat: writeFmt, ring: newRing)
 
@@ -227,6 +237,9 @@ final class SystemAudioTap {
             self.ring = nil
             self.scratch?.deallocate()
             self.scratch = nil
+            self.resampleScratch?.deallocate()
+            self.resampleScratch = nil
+            self.resampler = nil
             file = nil   // finalize/close the just-opened file
             destroyTapAndAggregateLocked()
             throw error
@@ -276,6 +289,9 @@ final class SystemAudioTap {
         ring = nil
         scratch?.deallocate()
         scratch = nil
+        resampleScratch?.deallocate()
+        resampleScratch = nil
+        resampler = nil
 
         // Finalize the file (setting nil flushes + closes — last reference now).
         file = nil
@@ -460,11 +476,12 @@ final class SystemAudioTap {
         guard frameCount > 0, let channelData = pcm.floatChannelData else { return }
 
         let channelCount = Int(tapFormat.channelCount)
-        let n = vDSP_Length(frameCount)
 
-        // --- Compute RMS for the meter + watchdog (mix of channel 0, cheap). ---
+        // --- Compute RMS for the meter + watchdog (all samples in plane 0: for interleaved
+        //     buffers that spans every channel, for deinterleaved it is channel 0 — cheap either
+        //     way). ---
         var rms: Float = 0
-        vDSP_rmsqv(channelData[0], 1, &rms, n)
+        vDSP_rmsqv(channelData[0], 1, &rms, vDSP_Length(Int(frameCount) * pcm.stride))
         if rms > 0.000_03 { // ~ -90 dBFS; treat anything above as "loud" for the watchdog
             lastLoudHostTime.withLock { $0 = now }
         }
@@ -496,26 +513,62 @@ final class SystemAudioTap {
             firstHostTime = inputTime.pointee.mHostTime
         }
 
-        if channelCount <= 1 {
-            // Already mono: enqueue straight from the input buffer.
-            ring.write(channelData[0], count: Int(frameCount))
-        } else if let scratch = self.scratch {
-            // Average all channels into mono, in scratch-sized chunks (IO buffers are tiny, so
-            // this loop runs once in practice).
-            let total = Int(frameCount)
-            var offset = 0
-            while offset < total {
-                let chunk = min(total - offset, scratchCapacity)
-                let cn = vDSP_Length(chunk)
-                memcpy(scratch, channelData[0] + offset, chunk * MemoryLayout<Float>.stride)
-                for ch in 1..<channelCount {
-                    vDSP_vadd(scratch, 1, channelData[ch] + offset, 1, scratch, 1, cn)
-                }
-                var scale = 1.0 / Float(channelCount)
-                vDSP_vsmul(scratch, 1, &scale, scratch, 1, cn)
-                ring.write(scratch, count: chunk)
-                offset += chunk
+        let resampler = self.resampler
+        let passThrough = resampler?.isPassThrough ?? true
+
+        var chunkLimit = scratchCapacity
+        if !passThrough, let resampler {
+            chunkLimit = min(chunkLimit, resampler.maxInputFrames(forOutputCapacity: resampleCapacity))
+        }
+        guard chunkLimit > 0 else { return }
+
+        if channelCount > 1 && self.scratch == nil { return }
+
+        let total = Int(frameCount)
+        let sampleStride = pcm.stride
+        var offset = 0
+        while offset < total {
+            let chunk = min(total - offset, chunkLimit)
+
+            let mono: UnsafePointer<Float>
+            if channelCount <= 1 {
+                mono = UnsafePointer(channelData[0] + offset)
+            } else {
+                let scratch = self.scratch!
+                Self.downmixChunk(
+                    channelData: channelData,
+                    channelCount: channelCount,
+                    sampleStride: sampleStride,
+                    frameOffset: offset,
+                    frames: chunk,
+                    into: scratch
+                )
+                mono = UnsafePointer(scratch)
             }
+
+            if passThrough {
+                ring.write(mono, count: chunk)
+            } else if let resampler, let out = self.resampleScratch {
+                let written = resampler.process(mono, count: chunk, into: out, capacity: resampleCapacity)
+                if written > 0 { ring.write(out, count: written) }
+            }
+            offset += chunk
+        }
+    }
+
+    static func downmixChunk(
+        channelData: UnsafePointer<UnsafeMutablePointer<Float>>,
+        channelCount: Int,
+        sampleStride: Int,
+        frameOffset: Int,
+        frames: Int,
+        into out: UnsafeMutablePointer<Float>
+    ) {
+        let n = vDSP_Length(frames)
+        var scale = 1.0 / Float(channelCount)
+        vDSP_vsmul(channelData[0] + frameOffset * sampleStride, sampleStride, &scale, out, 1, n)
+        for ch in 1..<channelCount {
+            vDSP_vsma(channelData[ch] + frameOffset * sampleStride, sampleStride, &scale, out, 1, out, 1, n)
         }
     }
 
@@ -633,11 +686,7 @@ final class SystemAudioTap {
 
         do {
             let built = try buildTapAndAggregateLocked()
-            // Keep writing in the original write format; only update the realtime wrap format /
-            // sample rate if the tap renegotiated. Note: if the sample rate changed we keep the
-            // original write file format (mono float) but the incoming buffers are wrapped with the
-            // new tapFormat — AVAudioFile will write whatever frames we hand it, so a rate change
-            // mid-file produces a benign tempo seam rather than a crash.
+            let previousRate = self.tapFormat?.sampleRate
             self.tapFormat = built.tapFormat
             if writeFormat == nil {
                 self.writeFormat = AVAudioFormat(
@@ -646,6 +695,19 @@ final class SystemAudioTap {
                     channels: 1,
                     interleaved: false
                 )
+            }
+            if let canonical = writeFormat?.sampleRate {
+                if resampler == nil || resampler?.outputRate != canonical {
+                    resampler = RealtimeResampler(outputRate: canonical)
+                }
+                resampler?.reset(inputRate: built.tapFormat.sampleRate)
+                if built.tapFormat.sampleRate != canonical {
+                    Self.log.warning(
+                        "desktop tap rebuilt at \(built.tapFormat.sampleRate, privacy: .public) Hz (was \(previousRate ?? 0, privacy: .public) Hz); resampling to the recording's \(canonical, privacy: .public) Hz"
+                    )
+                } else {
+                    Self.log.info("desktop tap rebuilt at \(canonical, privacy: .public) Hz (unchanged)")
+                }
             }
             try installIOProcAndStartLocked()
         } catch {
