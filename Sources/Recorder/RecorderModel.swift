@@ -106,7 +106,7 @@ final class RecorderModel {
 
     /// Everything needed to (re)run a transcription, captured at save time.
     private struct PendingTranscription {
-        let audioURL: URL
+        let audioURL: URL?
         let folderURL: URL
         let meetingTitle: String?
         let attendees: [String]
@@ -369,12 +369,12 @@ final class RecorderModel {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                if let liveResult, !liveResult.body.isEmpty, liveResult.complete {
-                    self.writeTranscript(body: liveResult.body, pending: pending, keepStatus: mixError != nil)
+                if let liveResult, !liveResult.isEmpty, liveResult.complete {
+                    self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: mixError != nil)
                 } else if mixError == nil {
                     self.startTranscription(pending)
-                } else if let liveResult, !liveResult.body.isEmpty {
-                    self.writeTranscript(body: liveResult.body, pending: pending, keepStatus: true)
+                } else if let liveResult, !liveResult.isEmpty {
+                    self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: true)
                 } else {
                     self.transcriptionState = .failed(
                         "No live transcript, and the audio mix failed, so there is nothing to transcribe."
@@ -488,14 +488,27 @@ final class RecorderModel {
 
         Task { [weak self] in
             guard let self else { return }
+            guard let audioURL = pending.audioURL else {
+                self.transcriptionState = .failed("This recording kept no audio, so it cannot be transcribed again.")
+                return
+            }
             do {
-                let body = try await self.live.transcribeFile(pending.audioURL)
+                let body = try await self.live.transcribeFile(audioURL)
                 guard !body.isEmpty else {
                     self.transcriptionState = .failed("The model returned an empty transcript (silent audio?).")
                     self.statusMessage = "Transcription produced no text"
                     return
                 }
-                self.writeTranscript(body: body, pending: pending, keepStatus: false)
+                var document = TranscriptDocument(
+                    live: [TranscriptLine(time: 0, text: body, speaker: nil)],
+                    meetingTitle: pending.meetingTitle,
+                    attendees: pending.attendees,
+                    startedAt: pending.startedAt,
+                    audioName: audioURL.lastPathComponent,
+                    model: self.live.loadedModelName ?? self.live.modelName
+                )
+                document.isPolished = true
+                self.writeTranscript(document: document, pending: pending, keepStatus: false)
             } catch {
                 let message = RecorderModel.describeTranscriptionError(error)
                 self.transcriptionState = .failed(message)
@@ -507,25 +520,46 @@ final class RecorderModel {
     /// Compose the transcript document, write it to transcript.md, and update
     /// the UI state. `keepStatus` leaves the status line untouched (used when a
     /// mix failure message must stay visible).
-    private func writeTranscript(body: String, pending: PendingTranscription, keepStatus: Bool) {
-        let document = RecorderModel.composeTranscriptDocument(
-            markdown: body,
-            meetingTitle: pending.meetingTitle,
-            attendees: pending.attendees,
-            startedAt: pending.startedAt,
-            audioName: pending.audioURL.lastPathComponent,
-            model: live.loadedModelName ?? live.modelName
+    /// Wrap live transcript lines in a document and write both files.
+    private func writeLiveTranscript(
+        _ lines: [TranscriptLine],
+        pending: PendingTranscription,
+        keepStatus: Bool
+    ) {
+        writeTranscript(
+            document: TranscriptDocument(
+                live: lines,
+                meetingTitle: pending.meetingTitle,
+                attendees: pending.attendees,
+                startedAt: pending.startedAt,
+                audioName: pending.audioURL?.lastPathComponent,
+                model: live.loadedModelName ?? live.modelName
+            ),
+            pending: pending,
+            keepStatus: keepStatus
         )
-        let transcriptURL = pending.folderURL.appendingPathComponent("transcript.md")
+    }
+
+    /// Write `transcript.json` and render `transcript.md` from it. The sidecar is written
+    /// first so a crash between the two never leaves the markdown ahead of its source.
+    private func writeTranscript(
+        document: TranscriptDocument,
+        pending: PendingTranscription,
+        keepStatus: Bool
+    ) {
+        let markdownURL = pending.folderURL.appendingPathComponent("transcript.md")
+        let jsonURL = pending.folderURL.appendingPathComponent("transcript.json")
+        let markdown = document.renderMarkdown()
         do {
-            try document.write(to: transcriptURL, atomically: true, encoding: .utf8)
+            try document.write(jsonTo: jsonURL)
+            try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
         } catch {
-            transcriptionState = .failed("Could not write transcript.md: \(error.localizedDescription)")
+            transcriptionState = .failed("Could not write the transcript: \(error.localizedDescription)")
             return
         }
-        lastTranscriptText = document
-        lastTranscriptURL = transcriptURL
-        transcriptionState = .done(transcriptURL)
+        lastTranscriptText = markdown
+        lastTranscriptURL = markdownURL
+        transcriptionState = .done(markdownURL)
         if !keepStatus {
             statusMessage = "Transcript saved (transcript.md)"
         }
@@ -622,41 +656,6 @@ final class RecorderModel {
         guard let root = RecordingsLibrary.recordingsRoot() else { return }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         NSWorkspace.shared.open(root)
-    }
-
-    /// Wrap the transcript body with a small header (title / date / attendees).
-    private static func composeTranscriptDocument(
-        markdown: String,
-        meetingTitle: String?,
-        attendees: [String],
-        startedAt: Date,
-        audioName: String,
-        model: String
-    ) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        formatter.timeStyle = .short
-
-        var header = "# Transcript"
-        if let title = meetingTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-            header += " — \(title)"
-        }
-
-        var lines = [header, ""]
-        lines.append("- **Recorded:** \(formatter.string(from: startedAt))")
-        if !attendees.isEmpty {
-            lines.append("- **Invited attendees:** \(attendees.joined(separator: ", "))")
-        }
-        lines.append("- **Audio:** `\(audioName)`")
-        lines.append("- **Model:** WhisperKit `\(model)` (on-device)")
-        lines.append("")
-        lines.append("> Transcribed on-device. Speaker labels: **You** = microphone, **Them** = desktop/system audio (live channel attribution), or **Speaker N** from diarization when transcribed from the saved file. In the audio, left = desktop, right = microphone.")
-        lines.append("")
-        lines.append("---")
-        lines.append("")
-        lines.append(markdown.trimmingCharacters(in: .whitespacesAndNewlines))
-        lines.append("")
-        return lines.joined(separator: "\n")
     }
 
     private static func describeTranscriptionError(_ error: Error) -> String {

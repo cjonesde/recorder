@@ -17,8 +17,10 @@ final class LiveTranscriber {
     /// What `endSession` produced. `complete` is false when the final tail could not be
     /// transcribed, so callers can fall back to transcribing the saved audio.
     struct LiveSessionResult {
-        let body: String
+        let lines: [TranscriptLine]
         let complete: Bool
+
+        var isEmpty: Bool { lines.isEmpty }
     }
 
     let host: WhisperModelHost
@@ -112,7 +114,7 @@ final class LiveTranscriber {
     /// and the new session's state is never touched.
     func endSession() async -> LiveSessionResult {
         guard isSessionActive else {
-            return LiveSessionResult(body: transcriptBody(), complete: true)
+            return LiveSessionResult(lines: confirmedLines, complete: true)
         }
         let generation = sessionGeneration
         inbox.end()
@@ -126,7 +128,7 @@ final class LiveTranscriber {
             try? await Task.sleep(for: .milliseconds(50))
         }
         guard generation == sessionGeneration else {
-            return LiveSessionResult(body: Self.body(of: snapshot), complete: false)
+            return LiveSessionResult(lines: snapshot, complete: false)
         }
         snapshot = confirmedLines
 
@@ -140,14 +142,14 @@ final class LiveTranscriber {
             }
         }
         guard generation == sessionGeneration else {
-            return LiveSessionResult(body: Self.body(of: snapshot), complete: false)
+            return LiveSessionResult(lines: snapshot, complete: false)
         }
 
         await tick(final: true, expectedGeneration: generation)
         guard generation == sessionGeneration else {
-            return LiveSessionResult(body: Self.body(of: snapshot), complete: false)
+            return LiveSessionResult(lines: snapshot, complete: false)
         }
-        return LiveSessionResult(body: transcriptBody(), complete: finalTickComplete)
+        return LiveSessionResult(lines: confirmedLines, complete: finalTickComplete)
     }
 
     func cancelSession() {
@@ -175,14 +177,6 @@ final class LiveTranscriber {
             if !hyp.isEmpty { parts.append(hyp) }
         }
         return parts.joined(separator: "\n\n")
-    }
-
-    private func transcriptBody() -> String {
-        Self.body(of: confirmedLines)
-    }
-
-    private static func body(of lines: [TranscriptLine]) -> String {
-        lines.map(\.markdown).joined(separator: "\n\n")
     }
 
     // MARK: Tick loop
