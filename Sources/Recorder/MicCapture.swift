@@ -399,6 +399,12 @@ final class MicCapture {
 
     // MARK: - Pause
 
+    /// Stop persisting audio while capture continues. `write` already treats a nil file
+    /// as capture-without-persist, so clearing it is enough.
+    func stopWriting() {
+        lock.withLock { self.file = nil }
+    }
+
     /// Gate writes without tearing down the engine; meters keep updating while paused.
     func setPaused(_ paused: Bool) {
         lock.withLock {

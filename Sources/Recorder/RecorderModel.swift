@@ -290,6 +290,48 @@ final class RecorderModel {
         startElapsedTimer(from: now)
     }
 
+    /// Change the audio-handling mode for the recording in progress. Downgrading to
+    /// transcript-only closes and deletes the partial audio. Upgrading is refused,
+    /// because the earlier audio was never written and a half-recording would
+    /// misrepresent itself. Returns whether the change applied to this recording.
+    @discardableResult
+    func changeAudioHandling(to mode: AudioHandlingMode) -> Bool {
+        guard state != .idle, let session = currentSession else {
+            audioHandlingMode = mode
+            return true
+        }
+
+        switch AudioHandlingChange.decide(
+            from: activeMode,
+            to: mode,
+            liveTranscriptionEnabled: liveTranscriptionEnabled
+        ) {
+        case .refuseNothingProduced:
+            statusMessage = "Transcript-only mode needs live transcription switched on."
+            return false
+        case .refuseUpgrade:
+            statusMessage = "Cannot start keeping audio mid-recording: the earlier audio was never saved."
+            return false
+        case .apply:
+            break
+        }
+
+        audioHandlingMode = mode
+
+        if AudioHandlingChange.deletesPartialAudio(from: activeMode, to: mode) {
+            tap.stopWriting()
+            mic.stopWriting()
+            for url in [session.desktopURL, session.micURL, session.outputURL].compactMap({ $0 }) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            statusMessage = "Switched to transcript only, audio so far deleted"
+        }
+
+        activeMode = mode
+        live.live.maxWindowSamples = LiveTranscriber.windowCap(for: mode)
+        return true
+    }
+
     func togglePause() {
         switch state {
         case .recording:

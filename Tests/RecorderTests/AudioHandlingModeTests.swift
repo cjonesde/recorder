@@ -66,4 +66,65 @@ final class AudioHandlingModeTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - Mid-recording changes
+
+    func testDowngradingToTranscriptOnlyIsAllowedAndDeletesPartialAudio() {
+        for active in [AudioHandlingMode.keepAudio, .keepAudioAndPolish] {
+            XCTAssertEqual(
+                AudioHandlingChange.decide(
+                    from: active, to: .transcriptOnly, liveTranscriptionEnabled: true
+                ),
+                .apply
+            )
+            XCTAssertTrue(
+                AudioHandlingChange.deletesPartialAudio(from: active, to: .transcriptOnly)
+            )
+        }
+    }
+
+    func testUpgradingMidRecordingIsRefused() {
+        for requested in [AudioHandlingMode.keepAudio, .keepAudioAndPolish] {
+            XCTAssertEqual(
+                AudioHandlingChange.decide(
+                    from: .transcriptOnly, to: requested, liveTranscriptionEnabled: true
+                ),
+                .refuseUpgrade,
+                "audio that was never written cannot be recovered"
+            )
+        }
+    }
+
+    func testSwitchingBetweenKeepAudioModesKeepsTheAudio() {
+        XCTAssertEqual(
+            AudioHandlingChange.decide(
+                from: .keepAudio, to: .keepAudioAndPolish, liveTranscriptionEnabled: true
+            ),
+            .apply
+        )
+        XCTAssertFalse(
+            AudioHandlingChange.deletesPartialAudio(from: .keepAudio, to: .keepAudioAndPolish)
+        )
+    }
+
+    func testTranscriptOnlyIsRefusedWhenNothingWouldBeSaved() {
+        XCTAssertEqual(
+            AudioHandlingChange.decide(
+                from: .keepAudio, to: .transcriptOnly, liveTranscriptionEnabled: false
+            ),
+            .refuseNothingProduced
+        )
+    }
+
+    func testStayingInTranscriptOnlyDeletesNothingFurther() {
+        XCTAssertEqual(
+            AudioHandlingChange.decide(
+                from: .transcriptOnly, to: .transcriptOnly, liveTranscriptionEnabled: true
+            ),
+            .apply
+        )
+        XCTAssertFalse(
+            AudioHandlingChange.deletesPartialAudio(from: .transcriptOnly, to: .transcriptOnly)
+        )
+    }
 }

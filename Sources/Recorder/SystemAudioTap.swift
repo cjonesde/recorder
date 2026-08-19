@@ -263,6 +263,13 @@ final class SystemAudioTap {
         startWatchdog()
     }
 
+    /// Stop persisting audio while capture continues: meters, `onSamples` and the ring
+    /// keep running, only the disk write stops. Used when a recording is downgraded to
+    /// transcript-only part way through.
+    func stopWriting() {
+        writingEnabled.withLock { $0 = false }
+    }
+
     /// Gate writes. Device keeps running, meters keep updating. Thread-safe.
     func setPaused(_ isPaused: Bool) {
         paused.withLock { $0 = isPaused }

@@ -46,3 +46,35 @@ enum AudioHandlingMode: String, CaseIterable, Identifiable {
         self == .transcriptOnly && !liveTranscriptionEnabled
     }
 }
+
+/// The outcome of asking to change mode while a recording is in progress.
+enum AudioHandlingChange: Equatable {
+    case apply
+    /// The requested mode would keep audio the recording never wrote.
+    case refuseUpgrade
+    /// The requested mode combined with the live setting would save nothing.
+    case refuseNothingProduced
+
+    static func decide(
+        from active: AudioHandlingMode,
+        to requested: AudioHandlingMode,
+        liveTranscriptionEnabled: Bool
+    ) -> AudioHandlingChange {
+        if requested.producesNothing(liveTranscriptionEnabled: liveTranscriptionEnabled) {
+            return .refuseNothingProduced
+        }
+        if requested.retainsAudio && !active.retainsAudio {
+            return .refuseUpgrade
+        }
+        return .apply
+    }
+
+    /// Whether applying this change means closing and deleting the partial audio.
+    static func deletesPartialAudio(
+        from active: AudioHandlingMode,
+        to requested: AudioHandlingMode
+    ) -> Bool {
+        active.retainsAudio && !requested.retainsAudio
+    }
+}
+
