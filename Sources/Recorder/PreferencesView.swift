@@ -123,14 +123,6 @@ private struct TranscriptionPreferences: View {
                 Text("Speakers")
             }
 
-            Section {
-                Toggle("Save transcript.md automatically after saving", isOn: $model.autoTranscribe)
-                Text("Writes the live transcript next to the audio. When live transcription was off, the saved audio is transcribed instead.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("After saving")
-            }
         }
         .formStyle(.grouped)
     }

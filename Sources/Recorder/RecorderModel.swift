@@ -36,9 +36,9 @@ final class RecorderModel {
     var silenceAutoStopEnabled: Bool = true {
         didSet { Preferences.silenceAutoStop = silenceAutoStopEnabled }
     }
-    /// Whether to write transcript.md automatically after a recording is saved.
-    var autoTranscribe: Bool = true {
-        didSet { Preferences.autoTranscribe = autoTranscribe }
+    /// What this recording may leave on disk.
+    var audioHandlingMode: AudioHandlingMode = .default {
+        didSet { Preferences.audioHandlingMode = audioHandlingMode }
     }
     /// Selected on-device Whisper model. Changing it loads (and downloads,
     /// when missing) the new model immediately, even mid-recording. When the
@@ -185,7 +185,7 @@ final class RecorderModel {
         silenceTimeout = Preferences.silenceTimeout
         silenceThresholdDB = Preferences.silenceThresholdDB
         silenceAutoStopEnabled = Preferences.silenceAutoStop
-        autoTranscribe = Preferences.autoTranscribe
+        audioHandlingMode = Preferences.audioHandlingMode
         whisperModel = Preferences.whisperModel
         transcriptionLanguage = Preferences.language
         liveTranscriptionEnabled = Preferences.liveTranscription
@@ -329,7 +329,7 @@ final class RecorderModel {
         let liveTask: Task<LiveTranscriber.LiveSessionResult, Never>? = live.isSessionActive
             ? Task { [live] in await live.endSession() }
             : nil
-        let wantsTranscript = autoTranscribe
+        let wantsTranscript = liveTranscriptionEnabled || audioHandlingMode.runsPolishPass
         if wantsTranscript {
             transcriptionState = .running
         }
