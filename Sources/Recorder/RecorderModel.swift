@@ -41,14 +41,23 @@ final class RecorderModel {
         didSet { Preferences.autoTranscribe = autoTranscribe }
     }
     /// Selected on-device Whisper model. Changing it loads (and downloads,
-    /// when missing) the new model immediately, even mid-recording.
+    /// when missing) the new model immediately, even mid-recording. When the
+    /// switch fails, the engine keeps the previous model and the selection is
+    /// rolled back to match it.
     var whisperModel: String = WhisperModelOption.defaultModelID {
         didSet {
             Preferences.whisperModel = whisperModel
             guard oldValue != whisperModel else { return }
             let name = whisperModel
             Task { [weak self] in
-                await self?.live.loadModel(name, downloadIfNeeded: true)
+                guard let self else { return }
+                await self.live.loadModel(name, downloadIfNeeded: true)
+                if self.live.loadFailureMessage != nil,
+                   let loaded = self.live.loadedModelName,
+                   self.whisperModel == name, loaded != name {
+                    self.whisperModel = loaded
+                    self.statusMessage = self.live.loadFailureMessage
+                }
             }
         }
     }
@@ -62,6 +71,14 @@ final class RecorderModel {
     /// Whether the transcript streams into the panel while recording.
     var liveTranscriptionEnabled: Bool = true {
         didSet { Preferences.liveTranscription = liveTranscriptionEnabled }
+    }
+    /// Whether transcripts carry speaker labels (live: You/Them by channel;
+    /// offline: Speaker N via on-device diarization).
+    var speakerLabelsEnabled: Bool = true {
+        didSet {
+            Preferences.speakerLabels = speakerLabelsEnabled
+            live.labelSpeakers = speakerLabelsEnabled
+        }
     }
 
     // Transcription (post-save).
@@ -172,6 +189,7 @@ final class RecorderModel {
         whisperModel = Preferences.whisperModel
         transcriptionLanguage = Preferences.language
         liveTranscriptionEnabled = Preferences.liveTranscription
+        speakerLabelsEnabled = Preferences.speakerLabels
     }
 
     // MARK: - Recording control
@@ -306,11 +324,13 @@ final class RecorderModel {
         )
 
         // Finalize the live transcript (transcribes the remaining tail) in
-        // parallel with the mix; both results are joined below.
-        let liveTask: Task<String, Never>? = live.isSessionActive
+        // parallel with the mix. Only awaited when a transcript will actually
+        // be written, so an off toggle or a slow model never delays the save.
+        let liveTask: Task<LocalTranscriptionEngine.LiveSessionResult, Never>? = live.isSessionActive
             ? Task { [live] in await live.endSession() }
             : nil
-        if autoTranscribe {
+        let wantsTranscript = autoTranscribe
+        if wantsTranscript {
             transcriptionState = .running
         }
 
@@ -329,8 +349,6 @@ final class RecorderModel {
                 mixError = error
             }
 
-            let liveBody = await liveTask?.value
-
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.lastTranscription = pending
@@ -338,19 +356,25 @@ final class RecorderModel {
                     ? "Saved \(outputURL.lastPathComponent)"
                     : "Mix failed (raw files kept): \(mixError!.localizedDescription)"
                 self.refreshRecordings()
-
-                guard self.autoTranscribe else {
+                if !wantsTranscript {
                     self.transcriptionState = .idle
                     if mixError == nil {
                         self.statusMessage = "Saved \(outputURL.lastPathComponent) · transcription off"
                     }
-                    return
                 }
+            }
+            guard wantsTranscript else { return }
 
-                if let liveBody, !liveBody.isEmpty {
-                    self.writeTranscript(body: liveBody, pending: pending, keepStatus: mixError != nil)
+            let liveResult = await liveTask?.value
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if let liveResult, !liveResult.body.isEmpty, liveResult.complete {
+                    self.writeTranscript(body: liveResult.body, pending: pending, keepStatus: mixError != nil)
                 } else if mixError == nil {
                     self.startTranscription(pending)
+                } else if let liveResult, !liveResult.body.isEmpty {
+                    self.writeTranscript(body: liveResult.body, pending: pending, keepStatus: true)
                 } else {
                     self.transcriptionState = .failed(
                         "No live transcript, and the audio mix failed, so there is nothing to transcribe."
@@ -490,7 +514,7 @@ final class RecorderModel {
             attendees: pending.attendees,
             startedAt: pending.startedAt,
             audioName: pending.audioURL.lastPathComponent,
-            model: live.modelName
+            model: live.loadedModelName ?? live.modelName
         )
         let transcriptURL = pending.folderURL.appendingPathComponent("transcript.md")
         do {
@@ -626,7 +650,7 @@ final class RecorderModel {
         lines.append("- **Audio:** `\(audioName)`")
         lines.append("- **Model:** WhisperKit `\(model)` (on-device)")
         lines.append("")
-        lines.append("> Transcribed locally. Speakers are not labeled; in the audio, left = desktop/system audio, right = microphone.")
+        lines.append("> Transcribed on-device. Speaker labels: **You** = microphone, **Them** = desktop/system audio (live channel attribution), or **Speaker N** from diarization when transcribed from the saved file. In the audio, left = desktop, right = microphone.")
         lines.append("")
         lines.append("---")
         lines.append("")

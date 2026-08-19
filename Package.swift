@@ -15,7 +15,8 @@ let package = Package(
         .executableTarget(
             name: "Recorder",
             dependencies: [
-                .product(name: "WhisperKit", package: "WhisperKit")
+                .product(name: "WhisperKit", package: "WhisperKit"),
+                .product(name: "SpeakerKit", package: "WhisperKit")
             ],
             path: "Sources/Recorder",
             swiftSettings: [

@@ -16,6 +16,7 @@ enum Preferences {
         static let whisperModel        = "whisperModelName"
         static let language            = "transcriptionLanguage"
         static let liveTranscription   = "liveTranscriptionEnabled"
+        static let speakerLabels       = "speakerLabelsEnabled"
     }
 
     /// Seconds of two-channel silence before a recording auto-stops. Default 300 (5 min).
@@ -69,5 +70,12 @@ enum Preferences {
     static var liveTranscription: Bool {
         get { defaults.object(forKey: Key.liveTranscription) == nil ? true : defaults.bool(forKey: Key.liveTranscription) }
         set { defaults.set(newValue, forKey: Key.liveTranscription) }
+    }
+
+    /// Whether transcripts carry speaker labels: You/Them by channel while
+    /// live, Speaker N via on-device diarization for saved files. Default true.
+    static var speakerLabels: Bool {
+        get { defaults.object(forKey: Key.speakerLabels) == nil ? true : defaults.bool(forKey: Key.speakerLabels) }
+        set { defaults.set(newValue, forKey: Key.speakerLabels) }
     }
 }

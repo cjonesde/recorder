@@ -20,7 +20,7 @@ struct PreferencesView: View {
             TranscriptionPreferences()
                 .tabItem { Label("Transcription", systemImage: "text.bubble") }
         }
-        .frame(width: 480, height: 460)
+        .frame(width: 480, height: 560)
     }
 }
 
@@ -115,6 +115,15 @@ private struct TranscriptionPreferences: View {
             }
 
             Section {
+                Toggle("Label speakers", isOn: $model.speakerLabelsEnabled)
+                Text("Live lines are labeled You (microphone) or Them (desktop audio) from the channel layout. Transcribing a saved file runs on-device diarization instead and labels voices Speaker 1, 2, ... (~50 MB one-time model download).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Speakers")
+            }
+
+            Section {
                 Toggle("Save transcript.md automatically after saving", isOn: $model.autoTranscribe)
                 Text("Writes the live transcript next to the audio. When live transcription was off, the saved audio is transcribed instead.")
                     .font(.caption)
@@ -146,9 +155,15 @@ private struct TranscriptionPreferences: View {
                     .foregroundStyle(.secondary)
             }
         case .ready:
-            Label("Model loaded and ready", systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if let message = model.live.loadFailureMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("Model loaded and ready", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         case .notDownloaded:
             Label("Downloads when you start recording or transcribing", systemImage: "arrow.down.circle")
                 .font(.caption)

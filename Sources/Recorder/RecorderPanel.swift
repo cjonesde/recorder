@@ -294,17 +294,25 @@ struct RecorderPanel: View {
                     .foregroundStyle(.secondary)
             }
         case .failed(let message):
-            HStack(alignment: .top, spacing: 4) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .font(.caption2)
-                Text(message)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+            engineWarning(message)
+        case .ready:
+            if let message = model.live.loadFailureMessage {
+                engineWarning(message)
             }
-        case .unloaded, .notDownloaded, .ready:
+        case .unloaded, .notDownloaded:
             EmptyView()
+        }
+    }
+
+    private func engineWarning(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.caption2)
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
     }
 
@@ -319,6 +327,7 @@ struct RecorderPanel: View {
                     }
                     ForEach(model.live.confirmedLines) { line in
                         (Text("[\(line.timestampLabel)] ").foregroundStyle(.secondary)
+                         + Text(line.speaker.map { "\($0): " } ?? "").bold()
                          + Text(line.text))
                             .font(.caption)
                             .frame(maxWidth: .infinity, alignment: .leading)

@@ -7,10 +7,10 @@ so you can always tell who was on the call from who was in the room:
 - **Desktop / system audio → Left channel** (the people you hear through your speakers)
 - **Your microphone → Right channel** (you, and anyone physically with you)
 
-It also **transcribes fully on-device** with a local Whisper model (via
-[WhisperKit](https://github.com/argmaxinc/WhisperKit), CoreML on Apple Silicon): the transcript
-**streams live into the panel while you record**, with a copy button and a model switcher. No
-API key, no audio ever leaves the machine.
+It also **transcribes and diarizes fully on-device** with local models (via
+[WhisperKit + SpeakerKit](https://github.com/argmaxinc/WhisperKit), CoreML on Apple Silicon):
+the transcript **streams live into the panel while you record**, with speaker labels, a copy
+button, and a model switcher. No API key, no audio ever leaves the machine.
 
 Pure Swift / SwiftUI. No Dock icon, no external runtime dependencies, no ffmpeg — just a
 single ad-hoc-signed `.app`.
@@ -41,6 +41,10 @@ mic right**, the channels stay cleanly separated:
   desktop + mic audio in a sliding window and streams the text into the panel as it is
   spoken. A **copy button** grabs the transcript so far at any moment, and a **model
   switcher** (Tiny up to Large v3 Turbo) works even mid-recording.
+- **Speaker labels** (toggleable): live lines are attributed **You** / **Them** in real time
+  from the channel layout (mic = you, desktop = remote). Transcribing a saved file instead
+  runs **on-device pyannote diarization** (SpeakerKit, CoreML) and labels voices
+  **Speaker 1, 2, ...**, which also separates multiple remote participants.
 - **Automatic transcript.md** when a recording is saved (toggleable): the live transcript is
   written next to the audio, or, when live transcription was off, the saved audio is
   transcribed offline with the same local model.
@@ -67,6 +71,7 @@ short version:
 | **Two captures, merged on stop** | Each source streams to its own raw `.caf`. They're aligned (via first-buffer host-time skew), resampled to a common 48 kHz, interleaved (L=desktop, R=mic), and encoded to AAC `.m4a` only on Save. The raw files are kept. |
 | **Realtime safety** | The IOProc runs on a hard-realtime thread (~10 ms deadline). It does **memcpy only**, into a lock-free single-producer/single-consumer [ring buffer](Sources/Recorder/FloatRingBuffer.swift); a background thread drains the ring to disk. No `malloc`, no file I/O on the audio thread — which is what eliminates the buffer-boundary clicks a naive `write()`-in-the-callback design produces. |
 | **Transcription** | On-device Whisper via [WhisperKit](https://github.com/argmaxinc/WhisperKit) (CoreML, ANE-accelerated). While recording, both captures feed a lock-guarded inbox on their non-realtime writer paths, get resampled to 16 kHz mono and mixed, and a tick loop re-transcribes a sliding ~25 s window every few seconds, confirming all segments but the trailing one. Saved files are transcribed offline through the same model. |
+| **Diarization** | Live: the inbox emits per-channel energy envelopes (100 ms blocks) alongside the mix, and each confirmed line is labeled **You**/**Them** by which channel dominated its span, so it streams in real time at zero model cost. Offline: SpeakerKit's pyannote pipeline (segmenter + embedder + PLDA clustering, CoreML) labels **Speaker N** by max time-overlap per segment. |
 
 ---
 
@@ -119,12 +124,13 @@ downloads automatically the first time you record or transcribe. In the panel or
    All listed models handle German and English.
 2. **Pick a language** or leave it on auto-detect (re-detected per window, so mixed
    German/English meetings work).
-3. Toggle **live transcription** (the streaming panel view) and **auto-transcribe** (writing
-   `transcript.md` after saving) independently.
+3. Toggle **live transcription** (the streaming panel view), **speaker labels**, and
+   **auto-transcribe** (writing `transcript.md` after saving) independently.
 
-Everything runs on-device; no audio or text leaves the machine. Speaker diarization is not
-included (the old Gemini path had it); the stereo layout in the saved audio still separates
-remote (left) from local (right) if you need to attribute voices later.
+Everything runs on-device; no audio or text leaves the machine. Live recordings label
+speakers **You**/**Them** from the channel layout in real time. For proper multi-speaker
+labels (**Speaker 1, 2, ...**), transcribe the saved recording from the Recent list: that
+runs SpeakerKit's pyannote diarization (a ~50 MB one-time model download) over the audio.
 
 The transcript is written next to the audio as `transcript.md`.
 
@@ -158,8 +164,10 @@ Sources/Recorder/
   MicCapture.swift           AVAudioEngine input tap → mic.caf
   AudioMonitors.swift        RMS → dBFS metering + dual-channel silence monitor
   StereoMixer.swift          align + resample + interleave (L=desktop, R=mic) + AAC → m4a
-  LocalTranscription.swift   WhisperKit engine: model catalog + download, live sliding-window
-                             streaming (sample inbox + resamplers), offline file transcription
+  LocalTranscription.swift   WhisperKit + SpeakerKit engine: model catalog + download, live
+                             sliding-window streaming (sample inbox + resamplers + channel
+                             energy envelopes for You/Them), offline file transcription with
+                             pyannote speaker diarization
   CalendarAccess.swift       EventKit: full-access auth, meetings-around-now
   NotificationManager.swift  meeting-end alert + "Stop Recording" action
   RecordingsLibrary.swift    reads ~/Documents/Recordings for the past-recordings list
@@ -177,10 +185,9 @@ docs/research-notes.md       SDK-verified API rationale behind the design
   is acceptable for personal use).
 - Acoustic echo cancellation (assumes headphones; AEC would muddy the deliberate hard channel
   separation).
-- Local speaker diarization. The per-channel raw files make a cheap two-party split possible
-  (transcribe desktop.caf and mic.caf separately and interleave by timestamp) and streaming
-  diarizers (Sortformer, FluidAudio/SpeakerKit) could label voices properly; neither is wired
-  up yet.
+- Streaming model-based diarization (Speaker N labels updating live). Live labels are
+  channel-based (You/Them); clustered per-voice labels currently require the offline pass
+  over the saved file.
 
 ---
 
