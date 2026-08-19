@@ -127,7 +127,7 @@ final class MicCapture {
     // MARK: - Start
 
     /// Begin capturing the microphone, writing MONO Float32 to `url` (CAF).
-    func start(writingTo url: URL) throws {
+    func start(writingTo url: URL?) throws {
         // Pull the LIVE hardware input format — never hardcode the sample rate.
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
@@ -150,16 +150,18 @@ final class MicCapture {
         // Open the destination file. Float32 mono PCM in a CAF container is cheap and
         // append-friendly; writing the file's processing format == monoFormat avoids
         // any implicit conversion on write.
-        let outFile: AVAudioFile
-        do {
-            outFile = try AVAudioFile(
-                forWriting: url,
-                settings: monoFormat.settings,
-                commonFormat: .pcmFormatFloat32,
-                interleaved: false
-            )
-        } catch {
-            throw MicError.couldNotCreateFile(url, underlying: error)
+        var outFile: AVAudioFile?
+        if let url {
+            do {
+                outFile = try AVAudioFile(
+                    forWriting: url,
+                    settings: monoFormat.settings,
+                    commonFormat: .pcmFormatFloat32,
+                    interleaved: false
+                )
+            } catch {
+                throw MicError.couldNotCreateFile(url, underlying: error)
+            }
         }
 
         let canonicalRate = inputFormat.sampleRate
@@ -339,21 +341,22 @@ final class MicCapture {
     /// Append one canonical-rate mono buffer to disk and forward it to `onSamples`.
     private func write(_ writeBuffer: AVAudioPCMBuffer, hostTime: UInt64) {
         let wrote: Bool = lock.withLock {
-            guard self.running, !self.paused, let file = self.file else { return false }
-            do {
-                try file.write(from: writeBuffer)
-                if self.firstHostTime == nil {
-                    self.firstHostTime = hostTime
+            guard self.running, !self.paused else { return false }
+            if let file = self.file {
+                do {
+                    try file.write(from: writeBuffer)
+                } catch {
+                    self.running = false
+                    self.file = nil
+                    self.onFatalError?(error)
+                    return false
                 }
-                self.frameCount += AVAudioFramePosition(writeBuffer.frameLength)
-                return true
-            } catch {
-                // A write failure is fatal for this capture; report once and stop writing.
-                self.running = false
-                self.file = nil
-                self.onFatalError?(error)
-                return false
             }
+            if self.firstHostTime == nil {
+                self.firstHostTime = hostTime
+            }
+            self.frameCount += AVAudioFramePosition(writeBuffer.frameLength)
+            return true
         }
 
         if wrote, let onSamples, let mono = writeBuffer.floatChannelData?[0] {
@@ -395,6 +398,12 @@ final class MicCapture {
     }
 
     // MARK: - Pause
+
+    /// Stop persisting audio while capture continues. `write` already treats a nil file
+    /// as capture-without-persist, so clearing it is enough.
+    func stopWriting() {
+        lock.withLock { self.file = nil }
+    }
 
     /// Gate writes without tearing down the engine; meters keep updating while paused.
     func setPaused(_ paused: Bool) {

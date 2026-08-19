@@ -36,9 +36,9 @@ final class RecorderModel {
     var silenceAutoStopEnabled: Bool = true {
         didSet { Preferences.silenceAutoStop = silenceAutoStopEnabled }
     }
-    /// Whether to write transcript.md automatically after a recording is saved.
-    var autoTranscribe: Bool = true {
-        didSet { Preferences.autoTranscribe = autoTranscribe }
+    /// What this recording may leave on disk.
+    var audioHandlingMode: AudioHandlingMode = .default {
+        didSet { Preferences.audioHandlingMode = audioHandlingMode }
     }
     /// Selected on-device Whisper model. Changing it loads (and downloads,
     /// when missing) the new model immediately, even mid-recording. When the
@@ -104,9 +104,13 @@ final class RecorderModel {
     /// title + attendees are available as transcript context at save time.
     @ObservationIgnored private var activeMeeting: Meeting?
 
+    /// The mode the recording in progress actually started with, which can differ from
+    /// `audioHandlingMode` after a mid-recording downgrade.
+    @ObservationIgnored private var activeMode: AudioHandlingMode = .default
+
     /// Everything needed to (re)run a transcription, captured at save time.
     private struct PendingTranscription {
-        let audioURL: URL
+        let audioURL: URL?
         let folderURL: URL
         let meetingTitle: String?
         let attendees: [String]
@@ -149,6 +153,13 @@ final class RecorderModel {
             }
         }
 
+        configureCaptures()
+    }
+
+    /// Wire the capture callbacks and load the selected model. Split out of `onAppear`
+    /// so it can run without the permission and notification setup, which needs a real
+    /// app bundle and therefore cannot run under the test runner.
+    func configureCaptures() {
         // Surface fatal capture errors to the UI.
         tap.onFatalError = { [weak self] error in
             DispatchQueue.main.async {
@@ -185,7 +196,7 @@ final class RecorderModel {
         silenceTimeout = Preferences.silenceTimeout
         silenceThresholdDB = Preferences.silenceThresholdDB
         silenceAutoStopEnabled = Preferences.silenceAutoStop
-        autoTranscribe = Preferences.autoTranscribe
+        audioHandlingMode = Preferences.audioHandlingMode
         whisperModel = Preferences.whisperModel
         transcriptionLanguage = Preferences.language
         liveTranscriptionEnabled = Preferences.liveTranscription
@@ -197,16 +208,24 @@ final class RecorderModel {
     func startRecording(meeting: Meeting?) {
         guard state == .idle else { return }
 
+        let mode = audioHandlingMode
+        guard !mode.producesNothing(liveTranscriptionEnabled: liveTranscriptionEnabled) else {
+            statusMessage = "Transcript-only mode needs live transcription switched on, otherwise nothing would be saved."
+            return
+        }
+
         let now = Date()
         let session: RecordingSession
         do {
-            session = try RecordingSession.create(now: now, meetingTitle: meeting?.title)
+            session = try RecordingSession.create(now: now, meetingTitle: meeting?.title, mode: mode)
         } catch {
             statusMessage = "Could not create recording folder: \(error.localizedDescription)"
             return
         }
         currentSession = session
         activeMeeting = meeting
+        activeMode = mode
+        live.live.maxWindowSamples = LiveTranscriber.windowCap(for: mode)
 
         // Clear any previous recording's transcription UI.
         transcriptionState = .idle
@@ -278,6 +297,48 @@ final class RecorderModel {
         startElapsedTimer(from: now)
     }
 
+    /// Change the audio-handling mode for the recording in progress. Downgrading to
+    /// transcript-only closes and deletes the partial audio. Upgrading is refused,
+    /// because the earlier audio was never written and a half-recording would
+    /// misrepresent itself. Returns whether the change applied to this recording.
+    @discardableResult
+    func changeAudioHandling(to mode: AudioHandlingMode) -> Bool {
+        guard state != .idle, let session = currentSession else {
+            audioHandlingMode = mode
+            return true
+        }
+
+        switch AudioHandlingChange.decide(
+            from: activeMode,
+            to: mode,
+            liveTranscriptionEnabled: liveTranscriptionEnabled
+        ) {
+        case .refuseNothingProduced:
+            statusMessage = "Transcript-only mode needs live transcription switched on."
+            return false
+        case .refuseUpgrade:
+            statusMessage = "Cannot start keeping audio mid-recording: the earlier audio was never saved."
+            return false
+        case .apply:
+            break
+        }
+
+        audioHandlingMode = mode
+
+        if AudioHandlingChange.deletesPartialAudio(from: activeMode, to: mode) {
+            tap.stopWriting()
+            mic.stopWriting()
+            for url in [session.desktopURL, session.micURL, session.outputURL].compactMap({ $0 }) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            statusMessage = "Switched to transcript only, audio so far deleted"
+        }
+
+        activeMode = mode
+        live.live.maxWindowSamples = LiveTranscriber.windowCap(for: mode)
+        return true
+    }
+
     func togglePause() {
         switch state {
         case .recording:
@@ -306,15 +367,53 @@ final class RecorderModel {
 
         cancelTimersAndAlerts()
         state = .idle
-        statusMessage = "Mixing…"
 
-        let outputURL = session.outputURL
-        let desktopURL = session.desktopURL
-        let micURL = session.micURL
+        let mode = activeMode
         let folderURL = session.folderURL
         let startedAt = session.startedAt
         let meetingTitle = activeMeeting?.title ?? session.meetingTitle
         let attendees = activeMeeting?.attendees ?? []
+
+        // Finalize the live transcript (transcribes the remaining tail) in
+        // parallel with the mix. Only awaited when a transcript will actually
+        // be written, so an off toggle or a slow model never delays the save.
+        let liveTask: Task<LiveTranscriber.LiveSessionResult, Never>? = live.isSessionActive
+            ? Task { [live] in await live.endSession() }
+            : nil
+
+        // No audio was ever written, so there is nothing to mix and nothing to polish.
+        guard mode.retainsAudio,
+              let outputURL = session.outputURL,
+              let desktopURL = session.desktopURL,
+              let micURL = session.micURL else {
+            let pending = PendingTranscription(
+                audioURL: nil,
+                folderURL: folderURL,
+                meetingTitle: meetingTitle,
+                attendees: attendees,
+                startedAt: startedAt
+            )
+            lastTranscription = pending
+            transcriptionState = .running
+            statusMessage = "Finishing the transcript…"
+            Task { [weak self] in
+                guard let self else { return }
+                guard let liveResult = await liveTask?.value, !liveResult.isEmpty else {
+                    self.transcriptionState = .failed("Nothing was transcribed, and no audio was kept.")
+                    self.statusMessage = "Nothing to save"
+                    self.refreshRecordings()
+                    return
+                }
+                self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: true)
+                self.statusMessage = "Transcript saved, no audio kept"
+            }
+            currentSession = nil
+            activeMeeting = nil
+            silenceMonitor = nil
+            return
+        }
+
+        statusMessage = "Mixing…"
         let pending = PendingTranscription(
             audioURL: outputURL,
             folderURL: folderURL,
@@ -322,14 +421,7 @@ final class RecorderModel {
             attendees: attendees,
             startedAt: startedAt
         )
-
-        // Finalize the live transcript (transcribes the remaining tail) in
-        // parallel with the mix. Only awaited when a transcript will actually
-        // be written, so an off toggle or a slow model never delays the save.
-        let liveTask: Task<LocalTranscriptionEngine.LiveSessionResult, Never>? = live.isSessionActive
-            ? Task { [live] in await live.endSession() }
-            : nil
-        let wantsTranscript = autoTranscribe
+        let wantsTranscript = liveTranscriptionEnabled || mode.runsPolishPass
         if wantsTranscript {
             transcriptionState = .running
         }
@@ -369,12 +461,12 @@ final class RecorderModel {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                if let liveResult, !liveResult.body.isEmpty, liveResult.complete {
-                    self.writeTranscript(body: liveResult.body, pending: pending, keepStatus: mixError != nil)
-                } else if mixError == nil {
+                if let liveResult, !liveResult.isEmpty, liveResult.complete {
+                    self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: mixError != nil)
+                } else if mixError == nil, mode.runsPolishPass {
                     self.startTranscription(pending)
-                } else if let liveResult, !liveResult.body.isEmpty {
-                    self.writeTranscript(body: liveResult.body, pending: pending, keepStatus: true)
+                } else if let liveResult, !liveResult.isEmpty {
+                    self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: true)
                 } else {
                     self.transcriptionState = .failed(
                         "No live transcript, and the audio mix failed, so there is nothing to transcribe."
@@ -488,14 +580,27 @@ final class RecorderModel {
 
         Task { [weak self] in
             guard let self else { return }
+            guard let audioURL = pending.audioURL else {
+                self.transcriptionState = .failed("This recording kept no audio, so it cannot be transcribed again.")
+                return
+            }
             do {
-                let body = try await self.live.transcribeFile(pending.audioURL)
+                let body = try await self.live.transcribeFile(audioURL)
                 guard !body.isEmpty else {
                     self.transcriptionState = .failed("The model returned an empty transcript (silent audio?).")
                     self.statusMessage = "Transcription produced no text"
                     return
                 }
-                self.writeTranscript(body: body, pending: pending, keepStatus: false)
+                var document = TranscriptDocument(
+                    live: [TranscriptLine(time: 0, text: body, speaker: nil)],
+                    meetingTitle: pending.meetingTitle,
+                    attendees: pending.attendees,
+                    startedAt: pending.startedAt,
+                    audioName: audioURL.lastPathComponent,
+                    model: self.live.loadedModelName ?? self.live.modelName
+                )
+                document.isPolished = true
+                self.writeTranscript(document: document, pending: pending, keepStatus: false)
             } catch {
                 let message = RecorderModel.describeTranscriptionError(error)
                 self.transcriptionState = .failed(message)
@@ -507,25 +612,46 @@ final class RecorderModel {
     /// Compose the transcript document, write it to transcript.md, and update
     /// the UI state. `keepStatus` leaves the status line untouched (used when a
     /// mix failure message must stay visible).
-    private func writeTranscript(body: String, pending: PendingTranscription, keepStatus: Bool) {
-        let document = RecorderModel.composeTranscriptDocument(
-            markdown: body,
-            meetingTitle: pending.meetingTitle,
-            attendees: pending.attendees,
-            startedAt: pending.startedAt,
-            audioName: pending.audioURL.lastPathComponent,
-            model: live.loadedModelName ?? live.modelName
+    /// Wrap live transcript lines in a document and write both files.
+    private func writeLiveTranscript(
+        _ lines: [TranscriptLine],
+        pending: PendingTranscription,
+        keepStatus: Bool
+    ) {
+        writeTranscript(
+            document: TranscriptDocument(
+                live: lines,
+                meetingTitle: pending.meetingTitle,
+                attendees: pending.attendees,
+                startedAt: pending.startedAt,
+                audioName: pending.audioURL?.lastPathComponent,
+                model: live.loadedModelName ?? live.modelName
+            ),
+            pending: pending,
+            keepStatus: keepStatus
         )
-        let transcriptURL = pending.folderURL.appendingPathComponent("transcript.md")
+    }
+
+    /// Write `transcript.json` and render `transcript.md` from it. The sidecar is written
+    /// first so a crash between the two never leaves the markdown ahead of its source.
+    private func writeTranscript(
+        document: TranscriptDocument,
+        pending: PendingTranscription,
+        keepStatus: Bool
+    ) {
+        let markdownURL = pending.folderURL.appendingPathComponent("transcript.md")
+        let jsonURL = pending.folderURL.appendingPathComponent("transcript.json")
+        let markdown = document.renderMarkdown()
         do {
-            try document.write(to: transcriptURL, atomically: true, encoding: .utf8)
+            try document.write(jsonTo: jsonURL)
+            try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
         } catch {
-            transcriptionState = .failed("Could not write transcript.md: \(error.localizedDescription)")
+            transcriptionState = .failed("Could not write the transcript: \(error.localizedDescription)")
             return
         }
-        lastTranscriptText = document
-        lastTranscriptURL = transcriptURL
-        transcriptionState = .done(transcriptURL)
+        lastTranscriptText = markdown
+        lastTranscriptURL = markdownURL
+        transcriptionState = .done(markdownURL)
         if !keepStatus {
             statusMessage = "Transcript saved (transcript.md)"
         }
@@ -624,43 +750,8 @@ final class RecorderModel {
         NSWorkspace.shared.open(root)
     }
 
-    /// Wrap the transcript body with a small header (title / date / attendees).
-    private static func composeTranscriptDocument(
-        markdown: String,
-        meetingTitle: String?,
-        attendees: [String],
-        startedAt: Date,
-        audioName: String,
-        model: String
-    ) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        formatter.timeStyle = .short
-
-        var header = "# Transcript"
-        if let title = meetingTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-            header += " — \(title)"
-        }
-
-        var lines = [header, ""]
-        lines.append("- **Recorded:** \(formatter.string(from: startedAt))")
-        if !attendees.isEmpty {
-            lines.append("- **Invited attendees:** \(attendees.joined(separator: ", "))")
-        }
-        lines.append("- **Audio:** `\(audioName)`")
-        lines.append("- **Model:** WhisperKit `\(model)` (on-device)")
-        lines.append("")
-        lines.append("> Transcribed on-device. Speaker labels: **You** = microphone, **Them** = desktop/system audio (live channel attribution), or **Speaker N** from diarization when transcribed from the saved file. In the audio, left = desktop, right = microphone.")
-        lines.append("")
-        lines.append("---")
-        lines.append("")
-        lines.append(markdown.trimmingCharacters(in: .whitespacesAndNewlines))
-        lines.append("")
-        return lines.joined(separator: "\n")
-    }
-
     private static func describeTranscriptionError(_ error: Error) -> String {
-        if let e = error as? LocalTranscriptionEngine.EngineError {
+        if let e = error as? WhisperModelHost.HostError {
             return e.errorDescription ?? "Transcription failed."
         }
         let ns = error as NSError

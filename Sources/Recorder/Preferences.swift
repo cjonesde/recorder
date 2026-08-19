@@ -12,7 +12,7 @@ enum Preferences {
         static let silenceTimeout      = "silenceTimeoutSeconds"
         static let silenceThresholdDB  = "silenceThresholdDB"
         static let silenceAutoStop     = "silenceAutoStopEnabled"
-        static let autoTranscribe      = "autoTranscribeAfterSave"
+        static let audioHandling       = "audioHandlingMode"
         static let whisperModel        = "whisperModelName"
         static let language            = "transcriptionLanguage"
         static let liveTranscription   = "liveTranscriptionEnabled"
@@ -37,12 +37,14 @@ enum Preferences {
         set { defaults.set(newValue, forKey: Key.silenceAutoStop) }
     }
 
-    /// Whether to write `transcript.md` automatically once a recording is saved.
-    /// Uses the live transcript when one exists, otherwise transcribes the saved
-    /// audio with the local model. Default true.
-    static var autoTranscribe: Bool {
-        get { defaults.object(forKey: Key.autoTranscribe) == nil ? true : defaults.bool(forKey: Key.autoTranscribe) }
-        set { defaults.set(newValue, forKey: Key.autoTranscribe) }
+    /// What a recording may leave on disk. Default keeps audio and polishes it.
+    static var audioHandlingMode: AudioHandlingMode {
+        get {
+            guard let raw = defaults.string(forKey: Key.audioHandling),
+                  let mode = AudioHandlingMode(rawValue: raw) else { return .default }
+            return mode
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.audioHandling) }
     }
 
     /// Selected on-device Whisper model (a WhisperKit variant name from

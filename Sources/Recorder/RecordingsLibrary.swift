@@ -13,6 +13,8 @@ struct RecordingEntry: Identifiable, Equatable {
     let audioURL: URL?
     /// transcript.md, if it exists.
     let transcriptURL: URL?
+    /// transcript.json, the structured source the markdown is rendered from.
+    let documentURL: URL?
 
     var hasTranscript: Bool { transcriptURL != nil }
     var displayTitle: String {
@@ -56,10 +58,12 @@ enum RecordingsLibrary {
             let transcript = url.appendingPathComponent("transcript.md")
             let hasAudio = fm.fileExists(atPath: audio.path)
             let hasTranscript = fm.fileExists(atPath: transcript.path)
+            let document = url.appendingPathComponent("transcript.json")
+            let hasDocument = fm.fileExists(atPath: document.path)
             let hasRaw = fm.fileExists(atPath: url.appendingPathComponent("desktop.caf").path)
                 || fm.fileExists(atPath: url.appendingPathComponent("mic.caf").path)
             // Only surface folders that actually look like recordings.
-            guard hasAudio || hasTranscript || hasRaw else { return nil }
+            guard hasAudio || hasTranscript || hasDocument || hasRaw else { return nil }
 
             let (parsedDate, title) = parseFolderName(url.lastPathComponent)
             let fileDate = values?.creationDate ?? values?.contentModificationDate ?? .distantPast
@@ -69,7 +73,8 @@ enum RecordingsLibrary {
                 title: title,
                 date: parsedDate ?? fileDate,
                 audioURL: hasAudio ? audio : nil,
-                transcriptURL: hasTranscript ? transcript : nil
+                transcriptURL: hasTranscript ? transcript : nil,
+                documentURL: hasDocument ? document : nil
             )
         }
 

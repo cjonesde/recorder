@@ -121,6 +121,10 @@ final class SystemAudioTap {
     private var writerThread: Thread?
     /// Set true by `stop()` to tell the writer to drain and exit.
     private let writerShouldStop = OSAllocatedUnfairLock<Bool>(initialState: false)
+    /// Cleared by `stopWriting()` so a recording can stop persisting audio while capture
+    /// continues. Deliberately not guarded by `lock`: `stop()` holds that lock while
+    /// waiting for the writer thread to exit, so the writer must never take it.
+    private let writingEnabled = OSAllocatedUnfairLock<Bool>(initialState: true)
 
     private static let log = Logger(subsystem: "com.tobi.Recorder", category: "SystemAudioTap")
 
@@ -163,7 +167,7 @@ final class SystemAudioTap {
     // MARK: - Public API
 
     /// Build the tap + aggregate, open the file, install the IOProc and start the device.
-    func start(writingTo url: URL) throws {
+    func start(writingTo url: URL?) throws {
         lock.lock()
         defer { lock.unlock() }
 
@@ -189,26 +193,31 @@ final class SystemAudioTap {
             throw TapError.invalidTapFormat
         }
 
-        do {
-            // AVAudioFile flushes per write -> at most one buffer lost on crash.
-            let f = try AVAudioFile(
-                forWriting: url,
-                settings: [
-                    AVFormatIDKey: kAudioFormatLinearPCM,
-                    AVSampleRateKey: writeFmt.sampleRate,
-                    AVNumberOfChannelsKey: 1,
-                    AVLinearPCMBitDepthKey: 32,
-                    AVLinearPCMIsFloatKey: true,
-                    AVLinearPCMIsNonInterleaved: false,
-                    AVLinearPCMIsBigEndianKey: false
-                ],
-                commonFormat: .pcmFormatFloat32,
-                interleaved: false
-            )
-            self.file = f
-        } catch {
-            destroyTapAndAggregateLocked()
-            throw TapError.fileOpenFailed(error.localizedDescription)
+        writingEnabled.withLock { $0 = url != nil }
+        if let url {
+            do {
+                // AVAudioFile flushes per write -> at most one buffer lost on crash.
+                let f = try AVAudioFile(
+                    forWriting: url,
+                    settings: [
+                        AVFormatIDKey: kAudioFormatLinearPCM,
+                        AVSampleRateKey: writeFmt.sampleRate,
+                        AVNumberOfChannelsKey: 1,
+                        AVLinearPCMBitDepthKey: 32,
+                        AVLinearPCMIsFloatKey: true,
+                        AVLinearPCMIsNonInterleaved: false,
+                        AVLinearPCMIsBigEndianKey: false
+                    ],
+                    commonFormat: .pcmFormatFloat32,
+                    interleaved: false
+                )
+                self.file = f
+            } catch {
+                destroyTapAndAggregateLocked()
+                throw TapError.fileOpenFailed(error.localizedDescription)
+            }
+        } else {
+            self.file = nil
         }
 
         self.writeFormat = writeFmt
@@ -227,7 +236,7 @@ final class SystemAudioTap {
         newResampler.reset(inputRate: built.tapFormat.sampleRate)
         self.resampler = newResampler
         writerShouldStop.withLock { $0 = false }
-        startWriterThread(file: self.file!, writeFormat: writeFmt, ring: newRing)
+        startWriterThread(file: self.file, writeFormat: writeFmt, ring: newRing)
 
         // 4) Install IOProc + start the aggregate device.
         do {
@@ -252,6 +261,13 @@ final class SystemAudioTap {
         lastLoudHostTime.withLock { $0 = now }
         lastCallbackHostTime.withLock { $0 = now }
         startWatchdog()
+    }
+
+    /// Stop persisting audio while capture continues: meters, `onSamples` and the ring
+    /// keep running, only the disk write stops. Used when a recording is downgraded to
+    /// transcript-only part way through.
+    func stopWriting() {
+        writingEnabled.withLock { $0 = false }
     }
 
     /// Gate writes. Device keeps running, meters keep updating. Thread-safe.
@@ -577,7 +593,7 @@ final class SystemAudioTap {
     /// Start the background consumer that drains `ring` into `file`. The thread holds its own
     /// strong references to `file`/`ring` for its lifetime and exits when `writerShouldStop` is set
     /// AND the ring has been fully drained.
-    private func startWriterThread(file: AVAudioFile, writeFormat: AVAudioFormat, ring: FloatRingBuffer) {
+    private func startWriterThread(file: AVAudioFile?, writeFormat: AVAudioFormat, ring: FloatRingBuffer) {
         let chunkFrames = 4096
         let thread = Thread { [weak self] in
             guard let buffer = AVAudioPCMBuffer(
@@ -590,8 +606,11 @@ final class SystemAudioTap {
                 let n = ring.read(into: dst, maxCount: chunkFrames)
                 if n > 0 {
                     buffer.frameLength = AVAudioFrameCount(n)
+                    let persisting = self?.writingEnabled.withLock { $0 } ?? false
                     do {
-                        try file.write(from: buffer)
+                        if persisting, let file {
+                            try file.write(from: buffer)
+                        }
                         self?.capturedFrames += AVAudioFramePosition(n)
                         self?.onSamples?(dst, n, writeFormat.sampleRate)
                     } catch {
