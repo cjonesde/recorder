@@ -326,7 +326,7 @@ final class RecorderModel {
         // Finalize the live transcript (transcribes the remaining tail) in
         // parallel with the mix. Only awaited when a transcript will actually
         // be written, so an off toggle or a slow model never delays the save.
-        let liveTask: Task<LocalTranscriptionEngine.LiveSessionResult, Never>? = live.isSessionActive
+        let liveTask: Task<LiveTranscriber.LiveSessionResult, Never>? = live.isSessionActive
             ? Task { [live] in await live.endSession() }
             : nil
         let wantsTranscript = autoTranscribe
