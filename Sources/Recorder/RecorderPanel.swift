@@ -33,6 +33,14 @@ struct RecorderPanel: View {
 
             controls
 
+            audioHandlingChip
+
+            if model.state != .idle && !model.audioHandlingMode.retainsAudio {
+                Label("Transcript only, no audio saved", systemImage: "eye.slash")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             if model.state != .idle && model.live.isSessionActive {
                 Divider()
                 liveTranscriptSection
@@ -127,6 +135,33 @@ struct RecorderPanel: View {
     }
 
     // MARK: - 2. Primary controls
+
+    private var audioHandlingChip: some View {
+        Menu {
+            ForEach(AudioHandlingMode.allCases) { mode in
+                Button {
+                    model.changeAudioHandling(to: mode)
+                } label: {
+                    if mode == model.audioHandlingMode {
+                        Label(mode.label, systemImage: "checkmark")
+                    } else {
+                        Text(mode.label)
+                    }
+                }
+            }
+        } label: {
+            Label(
+                model.audioHandlingMode.retainsAudio ? "Audio kept" : "Transcript only",
+                systemImage: model.audioHandlingMode.retainsAudio
+                    ? "waveform.circle"
+                    : "eye.slash.circle"
+            )
+            .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(model.audioHandlingMode.detail)
+    }
 
     @ViewBuilder
     private var controls: some View {

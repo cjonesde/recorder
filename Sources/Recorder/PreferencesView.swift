@@ -5,8 +5,8 @@ import SwiftUI
 /// The window itself is an AppKit `NSWindow` hosting this view — see
 /// `PreferencesWindowController` for why we don't use SwiftUI's `Settings` scene.
 ///   - **General**: silence auto-stop.
-///   - **Transcription**: on-device model, language, live transcription, and
-///     whether transcript.md is written automatically after saving.
+///   - **Recording**: what a recording may leave on disk.
+///   - **Transcription**: on-device model, language, live transcription, speakers.
 ///
 /// Grouped `Form`s in a `TabView` give the standard macOS System-Settings look.
 /// The `TabView` is given a single fixed size so the host window doesn't clip
@@ -17,10 +17,13 @@ struct PreferencesView: View {
             GeneralPreferences()
                 .tabItem { Label("General", systemImage: "gearshape") }
 
+            RecordingPreferences()
+                .tabItem { Label("Recording", systemImage: "waveform") }
+
             TranscriptionPreferences()
                 .tabItem { Label("Transcription", systemImage: "text.bubble") }
         }
-        .frame(width: 480, height: 560)
+        .frame(width: 480, height: 620)
     }
 }
 
@@ -63,6 +66,48 @@ private struct GeneralPreferences: View {
                 }
             } header: {
                 Text("Auto-stop")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Recording
+
+private struct RecordingPreferences: View {
+    @Environment(RecorderModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Form {
+            Section {
+                Picker("Audio handling", selection: $model.audioHandlingMode) {
+                    ForEach(AudioHandlingMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+
+                Text(model.audioHandlingMode.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if model.audioHandlingMode.producesNothing(
+                    liveTranscriptionEnabled: model.liveTranscriptionEnabled
+                ) {
+                    Label(
+                        "Transcript-only mode needs live transcription switched on, or nothing would be saved.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Audio handling")
+            } footer: {
+                Text("Transcript-only never writes audio to disk, not even temporarily, so a crash cannot leave a recording behind. The high-quality pass needs the audio file, so it is only available when audio is kept.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
