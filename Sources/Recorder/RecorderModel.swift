@@ -153,6 +153,13 @@ final class RecorderModel {
             }
         }
 
+        configureCaptures()
+    }
+
+    /// Wire the capture callbacks and load the selected model. Split out of `onAppear`
+    /// so it can run without the permission and notification setup, which needs a real
+    /// app bundle and therefore cannot run under the test runner.
+    func configureCaptures() {
         // Surface fatal capture errors to the UI.
         tap.onFatalError = { [weak self] error in
             DispatchQueue.main.async {

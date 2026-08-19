@@ -47,7 +47,14 @@ final class NotificationManager {
     /// Wire the delegate, register the "RECORDING" category, then request
     /// authorization. The delegate MUST be assigned before requesting so that
     /// `willPresent` / `didReceive` callbacks are never missed.
+    /// UNUserNotificationCenter traps when the process is not a real app bundle, which
+    /// is the case under the test runner. Every entry point checks this first.
+    private static var isAvailable: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+    }
+
     func requestAuthorization() async {
+        guard Self.isAvailable else { return }
         let center = UNUserNotificationCenter.current()
 
         // Bridge the inner delegate's "stop" tap back to this manager (main).
@@ -92,6 +99,7 @@ final class NotificationManager {
     /// Uses a single fixed request id ("meeting-end"), so scheduling again
     /// replaces any previously scheduled alert.
     func scheduleMeetingEndAlert(at endDate: Date, meetingTitle: String) {
+        guard Self.isAvailable else { return }
         let center = UNUserNotificationCenter.current()
 
         let content = UNMutableNotificationContent()
@@ -120,6 +128,7 @@ final class NotificationManager {
 
     /// Remove the pending meeting-end alert (if any).
     func cancelMeetingEndAlert() {
+        guard Self.isAvailable else { return }
         UNUserNotificationCenter.current()
             .removePendingNotificationRequests(withIdentifiers: [Self.meetingEndRequestIdentifier])
     }
