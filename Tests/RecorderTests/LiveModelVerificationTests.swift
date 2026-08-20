@@ -29,7 +29,8 @@ final class LiveModelVerificationTests: XCTestCase {
         XCTAssertEqual(engine.engineState, .ready, "model did not load")
         XCTAssertEqual(engine.loadedModelName, WhisperModelOption.defaultModelID)
 
-        let body = try await engine.transcribeFile(URL(fileURLWithPath: path))
+        let result = try await engine.transcribeFile(URL(fileURLWithPath: path))
+        let body = result.spokenText
         XCTAssertFalse(body.isEmpty, "the model returned no text")
         print("transcribed \(body.count) characters through the host")
     }
@@ -53,7 +54,7 @@ final class LiveModelVerificationTests: XCTestCase {
         let url = URL(fileURLWithPath: path)
         async let first = engine.transcribeFile(url)
         async let second = engine.transcribeFile(url)
-        let bodies = try await [first, second]
+        let bodies = try await [first, second].map(\.spokenText)
 
         // Both must return usable text: an interleaved decode on a shared pipe yields
         // truncated or empty output. Byte equality is not asserted, because

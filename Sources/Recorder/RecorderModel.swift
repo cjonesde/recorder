@@ -585,21 +585,24 @@ final class RecorderModel {
                 return
             }
             do {
-                let body = try await self.live.transcribeFile(audioURL)
-                guard !body.isEmpty else {
+                let offline = try await self.live.transcribeFile(audioURL)
+                guard !offline.lines.isEmpty else {
                     self.transcriptionState = .failed("The model returned an empty transcript (silent audio?).")
                     self.statusMessage = "Transcription produced no text"
                     return
                 }
-                var document = TranscriptDocument(
-                    live: [TranscriptLine(time: 0, text: body, speaker: nil)],
+                let document = TranscriptDocument(
                     meetingTitle: pending.meetingTitle,
                     attendees: pending.attendees,
                     startedAt: pending.startedAt,
                     audioName: audioURL.lastPathComponent,
-                    model: self.live.loadedModelName ?? self.live.modelName
+                    model: self.live.loadedModelName ?? self.live.modelName,
+                    isPolished: true,
+                    lines: offline.lines.map {
+                        TranscriptDocument.StoredLine(time: $0.time, text: $0.text, speakerID: $0.speaker)
+                    },
+                    speakerNames: offline.speakerNames
                 )
-                document.isPolished = true
                 self.writeTranscript(document: document, pending: pending, keepStatus: false)
             } catch {
                 let message = RecorderModel.describeTranscriptionError(error)

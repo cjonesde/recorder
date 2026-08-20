@@ -35,6 +35,12 @@ struct OfflineTranscription: Equatable {
     var clusters: [String: ClusterEvidence]
     var speakerNames: [String: String]
 
+    /// Every line's text with no timestamps or speaker labels, for checks that care only
+    /// about how much speech came back.
+    var spokenText: String {
+        lines.map(\.text).joined(separator: " ")
+    }
+
     /// Merge the two channels into one timeline.
     ///
     /// The microphone channel is one person by construction, so it is labelled directly
