@@ -136,6 +136,59 @@ final class SpeakerProfileStore {
         }
     }
 
+    // MARK: Enrollment by correction
+
+    /// Name a cluster, which is the only way a voiceprint is ever stored.
+    ///
+    /// Auto-matching names a speaker but never writes, so the database only ever grows
+    /// from a correction the user actually saw. Confirming the name already shown
+    /// reinforces the profile without stacking duplicate centroids for one cluster, and
+    /// changing it retracts this recording's contribution from the previous profile first.
+    ///
+    /// The centroid is stamped with the recording's `createdAt` rather than the moment of
+    /// the rename, which is what lets a later correction find exactly the centroid this
+    /// recording contributed.
+    ///
+    /// Returns the profile that now holds the voiceprint, or nil when nothing was
+    /// enrolled: no pending record, no centroid, or too little speech to judge by.
+    @discardableResult
+    func applyName(
+        _ name: String,
+        toCluster clusterID: String,
+        pendingID: String
+    ) throws -> UUID? {
+        guard var pending = loadPending(id: pendingID),
+              var cluster = pending.clusters[clusterID],
+              !cluster.vector.isEmpty,
+              cluster.speechSeconds >= SpeakerNaming.minSpeechSeconds else { return nil }
+
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let previous = cluster.appliedProfileID {
+            let unchanged = profiles
+                .first { $0.id == previous }?
+                .name
+                .caseInsensitiveCompare(trimmed) == .orderedSame
+            if unchanged { return previous }
+            try retract(centroidAddedAt: pending.createdAt, from: previous)
+        }
+
+        let profileID = try enroll(
+            centroid: VoiceCentroid(
+                vector: cluster.vector,
+                sampleSeconds: cluster.speechSeconds,
+                addedAt: pending.createdAt
+            ),
+            named: trimmed
+        )
+
+        cluster.appliedProfileID = profileID
+        pending.clusters[clusterID] = cluster
+        try writePending(pending)
+        return profileID
+    }
+
     // MARK: Pending centroids
 
     private var pendingDirectory: URL { baseURL.appendingPathComponent("pending", isDirectory: true) }

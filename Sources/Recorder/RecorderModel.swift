@@ -581,6 +581,43 @@ final class RecorderModel {
 
     // MARK: - Transcription
 
+    /// The speakers of the transcript currently shown, in order of first speech.
+    var currentSpeakers: [(id: String, name: String)] {
+        guard let document = lastDocument else { return [] }
+        return document.speakerIDs.map { ($0, document.displayName(for: $0)) }
+    }
+
+    /// Rename one speaker: re-render the transcript from its source, and when voice
+    /// profiles are on, teach the store what that person sounds like.
+    ///
+    /// The markdown is never patched. `transcript.json` is the source of truth, so a
+    /// rename re-renders it and stays idempotent across repeated applications.
+    func renameSpeaker(id: String, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let document = lastDocument,
+              let pending = lastTranscription else { return }
+
+        // The microphone speaker is identified structurally, so renaming it changes the
+        // display label only and never creates or updates a profile.
+        if voiceProfilesEnabled,
+           id != SpeakerNaming.micSpeakerID,
+           let centroidsID = document.speakerCentroidsID {
+            do {
+                try speakerStore.applyName(trimmed, toCluster: id, pendingID: centroidsID)
+            } catch {
+                Self.log.error("could not update voice profiles: \(error.localizedDescription)")
+                statusMessage = "Renamed, but the voice profile could not be saved"
+            }
+        }
+
+        writeTranscript(
+            document: document.renamingSpeaker(id, to: trimmed),
+            pending: pending,
+            keepStatus: true
+        )
+    }
+
     /// Re-run the last transcription (offline, from the saved audio).
     func retryTranscription() {
         guard let pending = lastTranscription else { return }

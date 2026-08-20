@@ -151,6 +151,92 @@ final class SpeakerProfileStoreTests: XCTestCase {
         XCTAssertNil(store.loadPending(id: "abc"))
     }
 
+    private func pendingWithOneCluster(
+        speechSeconds: Double = 30,
+        createdAt: Date = Date(timeIntervalSince1970: 0)
+    ) -> PendingSpeakers {
+        PendingSpeakers(
+            id: "rec1",
+            createdAt: createdAt,
+            clusters: ["s1": PendingSpeakers.Cluster(
+                vector: [1, 0],
+                speechSeconds: speechSeconds,
+                appliedProfileID: nil
+            )]
+        )
+    }
+
+    func testApplyingANameEnrollsAndRecordsTheProfile() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        try store.writePending(pendingWithOneCluster())
+
+        let profileID = try store.applyName("Anna", toCluster: "s1", pendingID: "rec1")
+
+        XCTAssertEqual(store.profiles.first?.name, "Anna")
+        XCTAssertEqual(store.profiles.first?.id, profileID)
+        XCTAssertEqual(store.loadPending(id: "rec1")?.clusters["s1"]?.appliedProfileID, profileID)
+    }
+
+    func testCorrectingANameRetractsFromTheWrongProfileFirst() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        try store.writePending(pendingWithOneCluster())
+        _ = try store.applyName("Anna", toCluster: "s1", pendingID: "rec1")
+
+        let benID = try store.applyName("Ben", toCluster: "s1", pendingID: "rec1")
+
+        XCTAssertEqual(store.profiles.map(\.name), ["Ben"], "Anna kept no voiceprint, so Anna is gone")
+        XCTAssertEqual(store.loadPending(id: "rec1")?.clusters["s1"]?.appliedProfileID, benID)
+    }
+
+    func testConfirmingTheSameNameReinforcesWithoutDuplicating() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        try store.writePending(pendingWithOneCluster())
+        let first = try store.applyName("Anna", toCluster: "s1", pendingID: "rec1")
+        let second = try store.applyName("Anna", toCluster: "s1", pendingID: "rec1")
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(store.profiles.count, 1)
+        XCTAssertEqual(
+            store.profiles.first?.centroids.count, 1,
+            "the same cluster must not stack up centroids in one profile"
+        )
+    }
+
+    func testAShortClusterIsNeverEnrolled() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        try store.writePending(pendingWithOneCluster(speechSeconds: SpeakerNaming.minSpeechSeconds - 0.1))
+
+        let profileID = try store.applyName("Anna", toCluster: "s1", pendingID: "rec1")
+
+        XCTAssertNil(profileID)
+        XCTAssertTrue(store.profiles.isEmpty)
+    }
+
+    func testApplyingANameWithNoPendingRecordEnrollsNothing() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        XCTAssertNil(try store.applyName("Anna", toCluster: "s1", pendingID: "missing"))
+        XCTAssertTrue(store.profiles.isEmpty)
+    }
+
+    func testAnEarlierRecordingCanReinforceAProfileItAlreadyContributedTo() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        try store.writePending(pendingWithOneCluster(createdAt: Date(timeIntervalSince1970: 0)))
+        try store.writePending(PendingSpeakers(
+            id: "rec2",
+            createdAt: Date(timeIntervalSince1970: 500),
+            clusters: ["s1": PendingSpeakers.Cluster(vector: [0, 1], speechSeconds: 30, appliedProfileID: nil)]
+        ))
+
+        let first = try store.applyName("Anna", toCluster: "s1", pendingID: "rec1")
+        let second = try store.applyName("Anna", toCluster: "s1", pendingID: "rec2")
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(
+            store.profiles.first?.centroids.count, 2,
+            "two different recordings of the same person are two voiceprints"
+        )
+    }
+
     func testCorruptProfilesFileIsQuarantinedRatherThanCrashing() throws {
         try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
         let profilesURL = baseURL.appendingPathComponent("profiles.json")
