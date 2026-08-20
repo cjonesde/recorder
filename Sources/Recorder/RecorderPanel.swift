@@ -455,6 +455,10 @@ struct RecorderPanel: View {
                 // (Finder, Mail, an editor, a chat). Falls back to the copy/reveal
                 // buttons above if a target doesn't accept the drag.
                 transcriptDragHandle(url)
+
+                if !model.currentSpeakers.isEmpty {
+                    speakerChips
+                }
             }
 
         case .failed(let message):
@@ -475,6 +479,25 @@ struct RecorderPanel: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+            }
+        }
+    }
+
+    /// One chip per speaker, in order of first speech. Renaming re-renders
+    /// `transcript.md` from `transcript.json`, and teaches the voice profile store when
+    /// profiles are enabled.
+    private var speakerChips: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Speakers")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(model.currentSpeakers, id: \.id) { speaker in
+                    SpeakerChip(id: speaker.id, name: speaker.name) { newName in
+                        model.renameSpeaker(id: speaker.id, to: newName)
+                    }
+                }
+                Spacer(minLength: 0)
             }
         }
     }
@@ -810,5 +833,66 @@ private struct MeetingRow: View {
         fmt.timeStyle = .short
         fmt.dateStyle = .none
         return "\(fmt.string(from: start)) – \(fmt.string(from: end))"
+    }
+}
+
+// MARK: - SpeakerChip
+
+/// A speaker's current name, click to rename.
+///
+/// Renaming is also how a voice profile is created: there is no separate enrollment
+/// step, so the correction the user would make anyway is what teaches the store.
+private struct SpeakerChip: View {
+    let id: String
+    let name: String
+    let rename: (String) -> Void
+
+    @State private var editing = false
+    @State private var draft = ""
+
+    var body: some View {
+        Button {
+            draft = name
+            editing = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: id == SpeakerNaming.micSpeakerID ? "person.fill" : "person")
+                    .font(.caption2)
+                Text(name)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 7)
+            .background(
+                Capsule().fill(Color.primary.opacity(0.06))
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Rename \(name)")
+        .popover(isPresented: $editing) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Rename speaker")
+                    .font(.callout.weight(.medium))
+                TextField("Name", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .onSubmit(apply)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { editing = false }
+                    Button("Apply", action: apply)
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private func apply() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        rename(trimmed)
+        editing = false
     }
 }
