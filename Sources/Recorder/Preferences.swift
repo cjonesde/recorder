@@ -17,6 +17,7 @@ enum Preferences {
         static let language            = "transcriptionLanguage"
         static let liveTranscription   = "liveTranscriptionEnabled"
         static let speakerLabels       = "speakerLabelsEnabled"
+        static let voiceProfiles       = "voiceProfilesEnabled"
     }
 
     /// Seconds of two-channel silence before a recording auto-stops. Default 300 (5 min).
@@ -79,5 +80,13 @@ enum Preferences {
     static var speakerLabels: Bool {
         get { defaults.object(forKey: Key.speakerLabels) == nil ? true : defaults.bool(forKey: Key.speakerLabels) }
         set { defaults.set(newValue, forKey: Key.speakerLabels) }
+    }
+
+    /// Whether saved voiceprints are matched against new recordings, and whether renaming
+    /// a speaker stores that voice. Default false: an embedding is biometric data under
+    /// GDPR Art. 9, so this stays opt-in.
+    static var voiceProfiles: Bool {
+        get { defaults.bool(forKey: Key.voiceProfiles) }
+        set { defaults.set(newValue, forKey: Key.voiceProfiles) }
     }
 }

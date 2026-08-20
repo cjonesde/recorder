@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import AppKit
+import os
 
 /// Owns every component and wires their callbacks. The model is @MainActor;
 /// audio-thread callbacks hop to main via DispatchQueue.main.async before touching state.
@@ -80,6 +81,17 @@ final class RecorderModel {
             live.labelSpeakers = speakerLabelsEnabled
         }
     }
+    /// Whether voice profiles are matched and enrolled. Off by default.
+    var voiceProfilesEnabled: Bool = false {
+        didSet { Preferences.voiceProfiles = voiceProfilesEnabled }
+    }
+
+    /// Saved voiceprints. Observed, so the Speakers pane updates as profiles change.
+    let speakerStore = SpeakerProfileStore()
+
+    /// The document behind the transcript currently shown, kept so a rename can
+    /// re-render `transcript.md` from its source rather than patching the markdown.
+    private(set) var lastDocument: TranscriptDocument?
 
     // Transcription (post-save).
     var transcriptionState: TranscriptionState = .idle
@@ -90,6 +102,8 @@ final class RecorderModel {
     var recentRecordings: [RecordingEntry] = []
 
     // MARK: - Heavy / audio objects (not observation-tracked)
+
+    @ObservationIgnored private static let log = Logger(subsystem: "com.tobi.Recorder", category: "RecorderModel")
 
     @ObservationIgnored private let tap = SystemAudioTap()
     @ObservationIgnored private let mic = MicCapture()
@@ -126,6 +140,9 @@ final class RecorderModel {
 
         // Load prior recordings from disk so they survive restarts.
         refreshRecordings()
+
+        // Biometric data should not outlive its purpose: drop voiceprints nobody named.
+        speakerStore.prunePending()
 
         // Request permissions concurrently, then load meetings.
         Task { @MainActor in
@@ -201,6 +218,7 @@ final class RecorderModel {
         transcriptionLanguage = Preferences.language
         liveTranscriptionEnabled = Preferences.liveTranscription
         speakerLabelsEnabled = Preferences.speakerLabels
+        voiceProfilesEnabled = Preferences.voiceProfiles
     }
 
     // MARK: - Recording control
@@ -591,6 +609,42 @@ final class RecorderModel {
                     self.statusMessage = "Transcription produced no text"
                     return
                 }
+                var names = offline.speakerNames
+                var centroidsID: String?
+
+                if self.voiceProfilesEnabled, !offline.clusters.isEmpty {
+                    let assignments = SpeakerNaming.resolve(
+                        clusters: offline.clusters,
+                        defaultNames: offline.speakerNames,
+                        profiles: self.speakerStore.profiles
+                    )
+                    for (id, assignment) in assignments {
+                        names[id] = assignment.name
+                    }
+
+                    // `appliedProfileID` stays nil even where a profile matched: an
+                    // automatic match names a speaker but never writes a voiceprint, so
+                    // the database only ever grows from a correction the user saw. It also
+                    // keeps confirming a correct guess an enrollment rather than a no-op.
+                    let voiceprints = PendingSpeakers(
+                        id: UUID().uuidString,
+                        createdAt: Date(),
+                        clusters: offline.clusters.reduce(into: [:]) { result, entry in
+                            result[entry.key] = PendingSpeakers.Cluster(
+                                vector: entry.value.centroid,
+                                speechSeconds: entry.value.speechSeconds,
+                                appliedProfileID: nil
+                            )
+                        }
+                    )
+                    do {
+                        try self.speakerStore.writePending(voiceprints)
+                        centroidsID = voiceprints.id
+                    } catch {
+                        Self.log.error("could not store voiceprints: \(error.localizedDescription)")
+                    }
+                }
+
                 let document = TranscriptDocument(
                     meetingTitle: pending.meetingTitle,
                     attendees: pending.attendees,
@@ -601,7 +655,8 @@ final class RecorderModel {
                     lines: offline.lines.map {
                         TranscriptDocument.StoredLine(time: $0.time, text: $0.text, speakerID: $0.speaker)
                     },
-                    speakerNames: offline.speakerNames
+                    speakerNames: names,
+                    speakerCentroidsID: centroidsID
                 )
                 self.writeTranscript(document: document, pending: pending, keepStatus: false)
             } catch {
@@ -654,6 +709,7 @@ final class RecorderModel {
         }
         lastTranscriptText = markdown
         lastTranscriptURL = markdownURL
+        lastDocument = document
         transcriptionState = .done(markdownURL)
         if !keepStatus {
             statusMessage = "Transcript saved (transcript.md)"
