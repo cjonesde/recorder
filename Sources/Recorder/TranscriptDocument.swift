@@ -21,6 +21,11 @@ struct TranscriptDocument: Codable, Equatable {
     var lines: [StoredLine]
     var speakerNames: [String: String]
 
+    /// The `pending/<uuid>.json` holding this transcript's voiceprints, when profiles
+    /// were enabled. Only the uuid is stored here: embeddings are biometric data and
+    /// stay out of the recording folder, so a transcript you share carries none.
+    var speakerCentroidsID: String?
+
     /// Speaker ids in order of first speech.
     var speakerIDs: [String] {
         var seen: Set<String> = []
@@ -114,5 +119,6 @@ extension TranscriptDocument {
         self.speakerNames = Dictionary(
             uniqueKeysWithValues: Set(lines.compactMap(\.speaker)).map { ($0, $0) }
         )
+        self.speakerCentroidsID = nil
     }
 }
