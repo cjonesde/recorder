@@ -2,6 +2,29 @@ import Foundation
 import Observation
 import os
 
+// MARK: - PendingSpeakers
+
+/// The centroids of one finished transcription, held until the user names them.
+///
+/// Kept out of the recording folder on purpose: a transcript you hand to someone else
+/// must not carry biometric data. `transcript.json` stores only this `id`.
+struct PendingSpeakers: Codable, Equatable {
+
+    struct Cluster: Codable, Equatable {
+        var vector: [Float]
+        var speechSeconds: Double
+        /// The profile this cluster's centroid was last applied to, so a later
+        /// correction knows what to retract.
+        var appliedProfileID: UUID?
+    }
+
+    var id: String
+    var createdAt: Date
+    var clusters: [String: Cluster]
+}
+
+// MARK: - SpeakerProfileStore
+
 /// Voiceprint persistence.
 ///
 /// Everything lives under one directory so "delete all voice data" is a single
@@ -110,6 +133,49 @@ final class SpeakerProfileStore {
         profiles = []
         if FileManager.default.fileExists(atPath: baseURL.path) {
             try FileManager.default.removeItem(at: baseURL)
+        }
+    }
+
+    // MARK: Pending centroids
+
+    private var pendingDirectory: URL { baseURL.appendingPathComponent("pending", isDirectory: true) }
+
+    private func pendingURL(id: String) -> URL {
+        pendingDirectory.appendingPathComponent("\(id).json")
+    }
+
+    func writePending(_ pending: PendingSpeakers) throws {
+        try FileManager.default.createDirectory(at: pendingDirectory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(pending).write(to: pendingURL(id: pending.id), options: .atomic)
+    }
+
+    func loadPending(id: String) -> PendingSpeakers? {
+        let url = pendingURL(id: id)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(PendingSpeakers.self, from: Data(contentsOf: url))
+    }
+
+    /// Drop pending centroids nobody named. Biometric data should not outlive its
+    /// purpose, and an unnamed cluster has none after a month.
+    func prunePending(olderThan lifetime: TimeInterval = 60 * 60 * 24 * 30, now: Date = Date()) {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: pendingDirectory,
+            includingPropertiesForKeys: nil
+        ) else { return }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        for entry in entries where entry.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: entry),
+                  let pending = try? decoder.decode(PendingSpeakers.self, from: data) else { continue }
+            if now.timeIntervalSince(pending.createdAt) > lifetime {
+                try? FileManager.default.removeItem(at: entry)
+            }
         }
     }
 

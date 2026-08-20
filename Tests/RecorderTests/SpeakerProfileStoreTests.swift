@@ -98,6 +98,59 @@ final class SpeakerProfileStoreTests: XCTestCase {
         XCTAssertTrue(SpeakerProfileStore(baseURL: baseURL).profiles.isEmpty)
     }
 
+    func testPendingRoundTrips() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        let pending = PendingSpeakers(
+            id: "abc-123",
+            createdAt: Date(timeIntervalSince1970: 100),
+            clusters: [
+                "s1": PendingSpeakers.Cluster(vector: [1, 0], speechSeconds: 42, appliedProfileID: nil)
+            ]
+        )
+
+        try store.writePending(pending)
+
+        let loaded = store.loadPending(id: "abc-123")
+        XCTAssertEqual(loaded?.clusters["s1"]?.vector, [1, 0])
+        XCTAssertEqual(loaded?.clusters["s1"]?.speechSeconds, 42)
+        XCTAssertNil(loaded?.clusters["s1"]?.appliedProfileID)
+    }
+
+    func testLoadingAnUnknownPendingIDIsNilRatherThanAnError() {
+        XCTAssertNil(SpeakerProfileStore(baseURL: baseURL).loadPending(id: "does-not-exist"))
+    }
+
+    func testPruneDropsOnlyEntriesPastTheirLifetime() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        let now = Date(timeIntervalSince1970: 60 * 60 * 24 * 100)
+        let fresh = PendingSpeakers(
+            id: "fresh",
+            createdAt: now.addingTimeInterval(-60 * 60 * 24 * 5),
+            clusters: [:]
+        )
+        let stale = PendingSpeakers(
+            id: "stale",
+            createdAt: now.addingTimeInterval(-60 * 60 * 24 * 31),
+            clusters: [:]
+        )
+        try store.writePending(fresh)
+        try store.writePending(stale)
+
+        store.prunePending(olderThan: 60 * 60 * 24 * 30, now: now)
+
+        XCTAssertNotNil(store.loadPending(id: "fresh"))
+        XCTAssertNil(store.loadPending(id: "stale"))
+    }
+
+    func testDeleteAllVoiceDataAlsoClearsPending() throws {
+        let store = SpeakerProfileStore(baseURL: baseURL)
+        try store.writePending(PendingSpeakers(id: "abc", createdAt: Date(timeIntervalSince1970: 0), clusters: [:]))
+
+        try store.deleteAllVoiceData()
+
+        XCTAssertNil(store.loadPending(id: "abc"))
+    }
+
     func testCorruptProfilesFileIsQuarantinedRatherThanCrashing() throws {
         try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
         let profilesURL = baseURL.appendingPathComponent("profiles.json")
