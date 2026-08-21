@@ -20,6 +20,38 @@ final class TranscriptDocumentTests: XCTestCase {
         )
     }
 
+    func testTranscriptsWrittenBeforeCentroidsStillDecode() throws {
+        let legacy = """
+        {
+          "attendees": [],
+          "isPolished": false,
+          "lines": [{"speakerID": "you", "text": "hello", "time": 0}],
+          "model": "openai_whisper-base",
+          "speakerNames": {"you": "You"},
+          "startedAt": "1970-01-01T00:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let document = try decoder.decode(TranscriptDocument.self, from: Data(legacy.utf8))
+
+        XCTAssertNil(document.speakerCentroidsID)
+        XCTAssertEqual(document.lines.count, 1)
+    }
+
+    func testCentroidsIDSurvivesARoundTrip() throws {
+        var document = sample()
+        document.speakerCentroidsID = "abc-123"
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let restored = try decoder.decode(TranscriptDocument.self, from: encoder.encode(document))
+
+        XCTAssertEqual(restored.speakerCentroidsID, "abc-123")
+    }
+
     func testSpeakerIDsAreInOrderOfFirstAppearance() {
         XCTAssertEqual(sample().speakerIDs, ["you", "s1"])
     }

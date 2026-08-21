@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Accelerate
+import AVFoundation
 import os
 import WhisperKit
 import SpeakerKit
@@ -153,44 +154,123 @@ final class LocalTranscriptionEngine {
 
     // MARK: Offline files
 
-    /// Transcribe a saved recording (stereo m4a; channels are summed to mono)
-    /// and return the transcript body as timestamped Markdown paragraphs. With
-    /// `labelSpeakers` on, the same audio is diarized on-device via SpeakerKit
-    /// and each line gets a "Speaker N" label (N in order of first appearance).
-    /// Serialized against the live tick loop: WhisperKit carries mutable decode
-    /// state, so one pipe must never transcribe twice concurrently.
-    func transcribeFile(_ url: URL) async throws -> String {
+    /// Transcribe a saved recording, one channel at a time.
+    ///
+    /// `StereoMixer` writes desktop to ch0 and mic to ch1, padded by each source's
+    /// host-time offset, so the two channels are sample-aligned and their independent
+    /// timelines merge by a plain sort. Decoding them separately keeps the microphone
+    /// speaker identifiable by construction and spares Whisper the crosstalk of two
+    /// people in one mixed signal.
+    ///
+    /// Serialized against the live tick loop: WhisperKit carries mutable decode state, so
+    /// one pipe must never transcribe twice concurrently. The two channel passes
+    /// therefore run one after the other.
+    func transcribeFile(_ url: URL) async throws -> OfflineTranscription {
         let path = url.path
+        guard Self.channelCount(of: url) >= 2 else {
+            return try await transcribeSingleChannel(path: path)
+        }
+
+        let desktopSamples = try await Self.load(path: path, channel: 0)
+        let micSamples = try await Self.load(path: path, channel: 1)
+
+        let desktop = Self.hasSignal(desktopSamples) ? try await transcribe(desktopSamples) : []
+        let mic = Self.hasSignal(micSamples) ? try await transcribe(micSamples) : []
+
+        var diarized: [DiarizedSpan] = []
+        var centroids: [Int: [Float]] = [:]
+        if labelSpeakers, !desktop.isEmpty {
+            (diarized, centroids) = await diarize(desktopSamples)
+        }
+
+        return OfflineTranscription.build(
+            mic: mic,
+            desktop: desktop,
+            diarized: diarized,
+            centroids: centroids
+        )
+    }
+
+    /// Legacy or externally supplied recordings that are not our two-channel layout.
+    /// Everything is treated as desktop audio: diarized if labelling is on, with no
+    /// "You" attribution available.
+    private func transcribeSingleChannel(path: String) async throws -> OfflineTranscription {
         let samples = try await Task.detached(priority: .utility) {
             try AudioProcessor.loadAudioAsFloatArray(fromPath: path)
         }.value
+        let segments = try await transcribe(samples)
 
+        var diarized: [DiarizedSpan] = []
+        var centroids: [Int: [Float]] = [:]
+        if labelSpeakers, !segments.isEmpty {
+            (diarized, centroids) = await diarize(samples)
+        }
+
+        return OfflineTranscription.build(
+            mic: [],
+            desktop: segments,
+            diarized: diarized,
+            centroids: centroids
+        )
+    }
+
+    private func transcribe(_ samples: [Float]) async throws -> [TimedText] {
         let options = decodingOptions(forFile: true)
         let results = try await host.withPipe { pipe in
             try await pipe.transcribe(audioArray: samples, decodeOptions: options)
         }
-        let segments = cleanSegments(results)
-
-        var speakers: [String?] = Array(repeating: nil, count: segments.count)
-        if labelSpeakers && !segments.isEmpty {
-            do {
-                let kit = try await diarizer()
-                let diarization = try await kit.diarize(audioArray: samples)
-                speakers = Self.assignSpeakers(to: segments, from: diarization.segments)
-            } catch {
-                Self.log.error("diarization failed, transcript left unlabeled: \(error.localizedDescription)")
-            }
+        return cleanSegments(results).map {
+            TimedText(
+                start: TimeInterval($0.start),
+                end: TimeInterval($0.end),
+                text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         }
+    }
 
-        return zip(segments, speakers)
-            .map { segment, speaker in
-                TranscriptLine(
-                    time: TimeInterval(segment.start),
-                    text: segment.text.trimmingCharacters(in: .whitespacesAndNewlines),
-                    speaker: speaker
-                ).markdown
+    /// Diarization is never allowed to fail the transcription: a failure costs the
+    /// speaker labels and nothing else.
+    private func diarize(_ samples: [Float]) async -> ([DiarizedSpan], [Int: [Float]]) {
+        do {
+            let kit = try await diarizer()
+            let result = try await kit.diarize(audioArray: samples)
+            let spans = result.segments.compactMap { segment in
+                segment.speaker.speakerId.map {
+                    DiarizedSpan(
+                        start: TimeInterval(segment.startTime),
+                        end: TimeInterval(segment.endTime),
+                        clusterID: $0
+                    )
+                }
             }
-            .joined(separator: "\n\n")
+            return (spans, result.speakerCentroidEmbeddings)
+        } catch {
+            Self.log.error("diarization failed, transcript left unlabeled: \(error.localizedDescription)")
+            return ([], [:])
+        }
+    }
+
+    private static func load(path: String, channel: Int) async throws -> [Float] {
+        try await Task.detached(priority: .utility) {
+            try AudioProcessor.loadAudioAsFloatArray(
+                fromPath: path,
+                channelMode: .specificChannel(channel)
+            )
+        }.value
+    }
+
+    private static func channelCount(of url: URL) -> Int {
+        guard let file = try? AVAudioFile(forReading: url) else { return 1 }
+        return Int(file.fileFormat.channelCount)
+    }
+
+    /// Skip a decode pass for a channel that holds nothing, which is the common case for
+    /// a listen-only meeting or a solo dictation.
+    private static func hasSignal(_ samples: [Float]) -> Bool {
+        guard !samples.isEmpty else { return false }
+        var meanSquare: Float = 0
+        vDSP_measqv(samples, 1, &meanSquare, vDSP_Length(samples.count))
+        return sqrt(meanSquare) > 1e-4
     }
 
     /// Lazily create the SpeakerKit diarizer. Its pyannote CoreML models
@@ -209,36 +289,4 @@ final class LocalTranscriptionEngine {
         return kit
     }
 
-    /// Give each transcription segment the diarized speaker with the largest
-    /// time overlap. Raw cluster ids are renumbered 1..N in order of first
-    /// appearance so labels read "Speaker 1", "Speaker 2", ... chronologically.
-    private static func assignSpeakers(
-        to segments: [TranscriptionSegment],
-        from diarized: [SpeakerSegment]
-    ) -> [String?] {
-        let ordered = diarized
-            .filter { $0.speaker.speakerId != nil }
-            .sorted { $0.startTime < $1.startTime }
-
-        var displayNumber: [Int: Int] = [:]
-        for segment in ordered {
-            let id = segment.speaker.speakerId!
-            if displayNumber[id] == nil {
-                displayNumber[id] = displayNumber.count + 1
-            }
-        }
-
-        return segments.map { segment in
-            var overlapByID: [Int: Float] = [:]
-            for dia in ordered {
-                let overlap = min(segment.end, dia.endTime) - max(segment.start, dia.startTime)
-                if overlap > 0, let id = dia.speaker.speakerId {
-                    overlapByID[id, default: 0] += overlap
-                }
-            }
-            guard let best = overlapByID.max(by: { $0.value < $1.value }),
-                  let number = displayNumber[best.key] else { return nil }
-            return "Speaker \(number)"
-        }
-    }
 }

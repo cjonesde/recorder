@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import AppKit
+import os
 
 /// Owns every component and wires their callbacks. The model is @MainActor;
 /// audio-thread callbacks hop to main via DispatchQueue.main.async before touching state.
@@ -80,6 +81,17 @@ final class RecorderModel {
             live.labelSpeakers = speakerLabelsEnabled
         }
     }
+    /// Whether voice profiles are matched and enrolled. Off by default.
+    var voiceProfilesEnabled: Bool = false {
+        didSet { Preferences.voiceProfiles = voiceProfilesEnabled }
+    }
+
+    /// Saved voiceprints. Observed, so the Speakers pane updates as profiles change.
+    let speakerStore = SpeakerProfileStore()
+
+    /// The document behind the transcript currently shown, kept so a rename can
+    /// re-render `transcript.md` from its source rather than patching the markdown.
+    private(set) var lastDocument: TranscriptDocument?
 
     // Transcription (post-save).
     var transcriptionState: TranscriptionState = .idle
@@ -90,6 +102,8 @@ final class RecorderModel {
     var recentRecordings: [RecordingEntry] = []
 
     // MARK: - Heavy / audio objects (not observation-tracked)
+
+    @ObservationIgnored private static let log = Logger(subsystem: "com.tobi.Recorder", category: "RecorderModel")
 
     @ObservationIgnored private let tap = SystemAudioTap()
     @ObservationIgnored private let mic = MicCapture()
@@ -126,6 +140,9 @@ final class RecorderModel {
 
         // Load prior recordings from disk so they survive restarts.
         refreshRecordings()
+
+        // Biometric data should not outlive its purpose: drop voiceprints nobody named.
+        speakerStore.prunePending()
 
         // Request permissions concurrently, then load meetings.
         Task { @MainActor in
@@ -201,6 +218,7 @@ final class RecorderModel {
         transcriptionLanguage = Preferences.language
         liveTranscriptionEnabled = Preferences.liveTranscription
         speakerLabelsEnabled = Preferences.speakerLabels
+        voiceProfilesEnabled = Preferences.voiceProfiles
     }
 
     // MARK: - Recording control
@@ -563,6 +581,43 @@ final class RecorderModel {
 
     // MARK: - Transcription
 
+    /// The speakers of the transcript currently shown, in order of first speech.
+    var currentSpeakers: [(id: String, name: String)] {
+        guard let document = lastDocument else { return [] }
+        return document.speakerIDs.map { ($0, document.displayName(for: $0)) }
+    }
+
+    /// Rename one speaker: re-render the transcript from its source, and when voice
+    /// profiles are on, teach the store what that person sounds like.
+    ///
+    /// The markdown is never patched. `transcript.json` is the source of truth, so a
+    /// rename re-renders it and stays idempotent across repeated applications.
+    func renameSpeaker(id: String, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let document = lastDocument,
+              let pending = lastTranscription else { return }
+
+        // The microphone speaker is identified structurally, so renaming it changes the
+        // display label only and never creates or updates a profile.
+        if voiceProfilesEnabled,
+           id != SpeakerNaming.micSpeakerID,
+           let centroidsID = document.speakerCentroidsID {
+            do {
+                try speakerStore.applyName(trimmed, toCluster: id, pendingID: centroidsID)
+            } catch {
+                Self.log.error("could not update voice profiles: \(error.localizedDescription)")
+                statusMessage = "Renamed, but the voice profile could not be saved"
+            }
+        }
+
+        writeTranscript(
+            document: document.renamingSpeaker(id, to: trimmed),
+            pending: pending,
+            keepStatus: true
+        )
+    }
+
     /// Re-run the last transcription (offline, from the saved audio).
     func retryTranscription() {
         guard let pending = lastTranscription else { return }
@@ -585,21 +640,61 @@ final class RecorderModel {
                 return
             }
             do {
-                let body = try await self.live.transcribeFile(audioURL)
-                guard !body.isEmpty else {
+                let offline = try await self.live.transcribeFile(audioURL)
+                guard !offline.lines.isEmpty else {
                     self.transcriptionState = .failed("The model returned an empty transcript (silent audio?).")
                     self.statusMessage = "Transcription produced no text"
                     return
                 }
-                var document = TranscriptDocument(
-                    live: [TranscriptLine(time: 0, text: body, speaker: nil)],
+                var names = offline.speakerNames
+                var centroidsID: String?
+
+                if self.voiceProfilesEnabled, !offline.clusters.isEmpty {
+                    let assignments = SpeakerNaming.resolve(
+                        clusters: offline.clusters,
+                        defaultNames: offline.speakerNames,
+                        profiles: self.speakerStore.profiles
+                    )
+                    for (id, assignment) in assignments {
+                        names[id] = assignment.name
+                    }
+
+                    // `appliedProfileID` stays nil even where a profile matched: an
+                    // automatic match names a speaker but never writes a voiceprint, so
+                    // the database only ever grows from a correction the user saw. It also
+                    // keeps confirming a correct guess an enrollment rather than a no-op.
+                    let voiceprints = PendingSpeakers(
+                        id: UUID().uuidString,
+                        createdAt: Date(),
+                        clusters: offline.clusters.reduce(into: [:]) { result, entry in
+                            result[entry.key] = PendingSpeakers.Cluster(
+                                vector: entry.value.centroid,
+                                speechSeconds: entry.value.speechSeconds,
+                                appliedProfileID: nil
+                            )
+                        }
+                    )
+                    do {
+                        try self.speakerStore.writePending(voiceprints)
+                        centroidsID = voiceprints.id
+                    } catch {
+                        Self.log.error("could not store voiceprints: \(error.localizedDescription)")
+                    }
+                }
+
+                let document = TranscriptDocument(
                     meetingTitle: pending.meetingTitle,
                     attendees: pending.attendees,
                     startedAt: pending.startedAt,
                     audioName: audioURL.lastPathComponent,
-                    model: self.live.loadedModelName ?? self.live.modelName
+                    model: self.live.loadedModelName ?? self.live.modelName,
+                    isPolished: true,
+                    lines: offline.lines.map {
+                        TranscriptDocument.StoredLine(time: $0.time, text: $0.text, speakerID: $0.speaker)
+                    },
+                    speakerNames: names,
+                    speakerCentroidsID: centroidsID
                 )
-                document.isPolished = true
                 self.writeTranscript(document: document, pending: pending, keepStatus: false)
             } catch {
                 let message = RecorderModel.describeTranscriptionError(error)
@@ -651,6 +746,7 @@ final class RecorderModel {
         }
         lastTranscriptText = markdown
         lastTranscriptURL = markdownURL
+        lastDocument = document
         transcriptionState = .done(markdownURL)
         if !keepStatus {
             statusMessage = "Transcript saved (transcript.md)"
