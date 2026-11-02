@@ -1,0 +1,30 @@
+{
+  "audio" : "Tools\/ASRBenchmark\/fixtures\/jfk.wav",
+  "audioSeconds" : 11,
+  "backend" : "whisper",
+  "fallbacks" : 3,
+  "firstDecodeSeconds" : 1.1184769868850708,
+  "firstText" : "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+  "language" : "auto",
+  "loadSecondsIncludingDownload" : 17.093437910079956,
+  "model" : "openai_whisper-base",
+  "os" : "Version 27.2 (Build 26B123)",
+  "peakRSSBytes" : 150519808,
+  "physicalMemoryBytes" : 17179869184,
+  "warmDecodeSeconds" : [
+    0.17922306060791016,
+    0.17788207530975342,
+    0.17886590957641602,
+    0.17480409145355225,
+    0.1761469841003418
+  ],
+  "warmMedianSeconds" : 0.17788207530975342,
+  "warmRealtimeMultiplier" : 61.838720853943521,
+  "warmTexts" : [
+    "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+    "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+    "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+    "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+    "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country."
+  ]
+}

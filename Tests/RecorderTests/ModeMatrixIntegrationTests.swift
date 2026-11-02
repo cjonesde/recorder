@@ -47,6 +47,7 @@ final class ModeMatrixIntegrationTests: XCTestCase {
 
         // No meeting: scheduling a meeting-end notification needs a real app bundle.
         model.startRecording(meeting: nil)
+        while model.state == .preparing { try await Task.sleep(for: .milliseconds(100)) }
         let session = try XCTUnwrap(
             model.currentSession,
             "recording did not start: \(model.statusMessage ?? "no message")"
@@ -112,6 +113,7 @@ final class ModeMatrixIntegrationTests: XCTestCase {
 
         let model = makeModel(mode: .keepAudioAndPolish)
         model.startRecording(meeting: nil)
+        while model.state == .preparing { try await Task.sleep(for: .milliseconds(100)) }
         let session = try XCTUnwrap(model.currentSession)
         let folder = session.folderURL
         created.append(folder)

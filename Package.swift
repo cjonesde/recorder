@@ -4,9 +4,8 @@ import PackageDescription
 let package = Package(
     name: "Recorder",
     platforms: [
-        // macOS 15+: the Synchronization module's `Atomic` (used by the
-        // realtime-safe ring buffer in the system-audio tap) requires it.
-        .macOS("15")
+        // Apple SpeechAnalyzer provides incremental on-device transcription.
+        .macOS("26")
     ],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "1.1.0")

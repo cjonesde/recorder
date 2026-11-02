@@ -85,12 +85,15 @@ private struct RecordingPreferences: View {
         @Bindable var model = model
         Form {
             Section {
-                Picker("Audio handling", selection: $model.audioHandlingMode) {
+                Picker("Audio handling", selection: Binding(
+                    get: { model.audioHandlingMode }, set: { model.changeAudioHandling(to: $0) }
+                )) {
                     ForEach(AudioHandlingMode.allCases) { mode in
                         Text(mode.label).tag(mode)
                     }
                 }
                 .pickerStyle(.radioGroup)
+                .disabled(model.state == .preparing || model.state == .finishing)
 
                 Text(model.audioHandlingMode.detail)
                     .font(.caption)
@@ -127,27 +130,13 @@ private struct TranscriptionPreferences: View {
         @Bindable var model = model
         Form {
             Section {
-                Picker("Model", selection: $model.whisperModel) {
-                    ForEach(WhisperModelOption.catalog) { option in
-                        Text("\(option.label) · \(option.detail)").tag(option.id)
-                    }
-                }
-                engineStatus
-            } header: {
-                Text("On-device model")
-            } footer: {
-                Text("Runs fully on this Mac via WhisperKit (CoreML). Each model is downloaded once from Hugging Face into Application Support; switching later is instant. All listed models handle German and English.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
                 Picker("Language", selection: $model.transcriptionLanguage) {
                     ForEach(TranscriptionLanguage.options, id: \.id) { option in
                         Text(option.label).tag(option.id)
                     }
                 }
-                Text("Auto-detect re-checks the language for every window, which handles meetings that mix languages.")
+                .disabled(!model.canStartRecording)
+                Text("Select the language before recording. Apple speech streams on this Mac; it does not switch languages automatically. Language assets download before capture starts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -156,11 +145,28 @@ private struct TranscriptionPreferences: View {
 
             Section {
                 Toggle("Stream the transcript live while recording", isOn: $model.liveTranscriptionEnabled)
-                Text("Shows the transcript in the panel as it is spoken, with a copy button. Uses more CPU while recording.")
+                    .disabled(!model.canStartRecording)
+                Text("Shows words while you speak. Transcript-only mode saves text and discards consumed audio buffers.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Live transcription")
+            }
+
+            Section {
+                Picker("Model", selection: $model.whisperModel) {
+                    ForEach(WhisperModelOption.catalog) { option in
+                        Text("\(option.label) · \(option.detail)").tag(option.id)
+                    }
+                }
+                .disabled(!model.canStartRecording)
+                engineStatus
+            } header: {
+                Text("Saved audio: high-quality pass")
+            } footer: {
+                Text("Whisper is used only for saved audio. Its model downloads when you transcribe a file. Live speech uses Apple’s on-device streaming recognizer.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
         }
@@ -197,7 +203,7 @@ private struct TranscriptionPreferences: View {
                     .foregroundStyle(.secondary)
             }
         case .notDownloaded:
-            Label("Downloads when you start recording or transcribing", systemImage: "arrow.down.circle")
+            Label("Downloads when you transcribe saved audio", systemImage: "arrow.down.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .failed(let message):

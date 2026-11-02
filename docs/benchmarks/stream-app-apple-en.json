@@ -1,0 +1,62 @@
+{
+  "audioSeconds" : 11,
+  "backend" : "app-apple-streaming",
+  "complete" : true,
+  "events" : [
+    {
+      "confirmedLines" : 0,
+      "text" : "And",
+      "wallSeconds" : 1.203354291676078
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "And so, my fellow",
+      "wallSeconds" : 2.1020142083434621
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "And so, my fellow Americans",
+      "wallSeconds" : 3.1040374583390076
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "And so, my fellow Americans, Ask not",
+      "wallSeconds" : 5.0065733750088839
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "And so, my fellow Americans, Ask not what your country can",
+      "wallSeconds" : 6.9064898750075372
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for you",
+      "wallSeconds" : 7.9016493750095833
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for you.",
+      "wallSeconds" : 8.9006796666653827
+    },
+    {
+      "confirmedLines" : 1,
+      "text" : "[00:00] And so, my fellow Americans, ask not what your country can do for you.",
+      "wallSeconds" : 9.1065203333419049
+    },
+    {
+      "confirmedLines" : 1,
+      "text" : "[00:00] And so, my fellow Americans, ask not what your country can do for you.\n\nAsk what you can do",
+      "wallSeconds" : 9.8049223749985686
+    },
+    {
+      "confirmedLines" : 1,
+      "text" : "[00:00] And so, my fellow Americans, ask not what your country can do for you.\n\nAsk what you can do for your country",
+      "wallSeconds" : 10.806019583338639
+    }
+  ],
+  "finalText" : "And so, my fellow Americans, ask not what your country can do for you. Ask what you can do for your country.",
+  "finishSeconds" : 0.074834500002907589,
+  "language" : "en-US",
+  "loadSeconds" : 0.037087999997311272,
+  "peakRSSBytes" : 37142528
+}

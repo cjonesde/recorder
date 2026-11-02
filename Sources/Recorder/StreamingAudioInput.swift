@@ -1,0 +1,203 @@
+import AVFoundation
+import CoreMedia
+import Darwin
+import Foundation
+
+enum StreamingSpeechError: LocalizedError {
+    case unavailableLanguage
+    case unsupportedFormat
+    case inputOverrun
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailableLanguage: return "Apple speech recognition does not support the selected language on this Mac."
+        case .unsupportedFormat: return "Apple speech recognition returned an unsupported audio format."
+        case .inputOverrun: return "Transcription could not keep up. Capture stopped to avoid retaining an audio backlog."
+        }
+    }
+}
+
+enum ErasingPCMBuffer {
+    static func make(format: AVAudioFormat, count: Int) throws -> AVAudioPCMBuffer {
+        guard format.channelCount == 1,
+              [.pcmFormatFloat32, .pcmFormatInt16].contains(format.commonFormat), count > 0 else {
+            throw StreamingSpeechError.unsupportedFormat
+        }
+        let bytes = count * Int(format.streamDescription.pointee.mBytesPerFrame)
+        let storage = UnsafeMutableRawPointer.allocate(byteCount: bytes, alignment: 16)
+        storage.initializeMemory(as: UInt8.self, repeating: 0, count: bytes)
+        var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+            mNumberChannels: 1, mDataByteSize: UInt32(bytes), mData: storage
+        ))
+        let buffer = withUnsafePointer(to: &list) {
+            AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: $0) { released in
+                let data = released.pointee.mBuffers.mData!
+                _ = memset_s(data, bytes, 0, bytes)
+                data.deallocate()
+            }
+        }
+        guard let buffer else {
+            _ = memset_s(storage, bytes, 0, bytes)
+            storage.deallocate()
+            throw StreamingSpeechError.unsupportedFormat
+        }
+        buffer.frameLength = AVAudioFrameCount(count)
+        return buffer
+    }
+}
+
+/// Capture callbacks and the consumer share this lock. No audio array escapes it;
+/// the only output is an owned PCM allocation that erases itself on release.
+final class StreamingAudioInput: @unchecked Sendable {
+    enum Source: Int { case desktop, mic }
+
+    struct Chunk {
+        let buffer: AVAudioPCMBuffer
+        let startTime: CMTime
+        var start: TimeInterval { CMTimeGetSeconds(startTime) }
+        let duration: TimeInterval
+        let desktopEnergy: Float
+        let micEnergy: Float
+    }
+
+    private final class Channel {
+        let samples: UnsafeMutablePointer<Float>
+        let scratch: UnsafeMutablePointer<Float>
+        let capacity: Int
+        let resampler: RealtimeResampler
+        var count = 0
+        var oldest: TimeInterval = 0
+        var lastFeed: TimeInterval = 0
+
+        init(rate: Double) {
+            capacity = Int(rate / 2)
+            samples = .allocate(capacity: capacity)
+            scratch = .allocate(capacity: capacity)
+            samples.initialize(repeating: 0, count: capacity)
+            scratch.initialize(repeating: 0, count: capacity)
+            resampler = RealtimeResampler(outputRate: rate)
+        }
+
+        func clear() {
+            AudioMemory.erase(samples, count: capacity)
+            AudioMemory.erase(scratch, count: capacity)
+            count = 0
+            resampler.reset(inputRate: 0)
+        }
+
+        func consume(_ n: Int) {
+            guard n > 0 else { return }
+            let remaining = count - n
+            memmove(samples, samples + n, remaining * MemoryLayout<Float>.stride)
+            AudioMemory.erase(samples + remaining, count: n)
+            count = remaining
+            oldest += Double(n) / resampler.outputRate
+        }
+
+        deinit {
+            clear()
+            samples.deallocate()
+            scratch.deallocate()
+        }
+    }
+
+    private let lock = NSLock()
+    private var channels: [Channel] = []
+    private var format: AVAudioFormat?
+    private var accepting = false
+    private var overrun = false
+    private var position: Int64 = 0
+
+    var pendingFrames: Int { lock.withLock { channels.reduce(0) { $0 + $1.count } } }
+
+    func begin(format: AVAudioFormat) {
+        lock.withLock {
+            channels = [Channel(rate: format.sampleRate), Channel(rate: format.sampleRate)]
+            self.format = format
+            accepting = true
+            overrun = false
+            position = 0
+        }
+    }
+
+    func end() { lock.withLock { accepting = false } }
+
+    func discard() {
+        lock.withLock {
+            accepting = false
+            channels.removeAll()
+            format = nil
+        }
+    }
+
+    func ingest(_ source: Source, _ samples: UnsafePointer<Float>, count: Int, rate: Double) {
+        guard count > 0, rate.isFinite, rate > 0 else { return }
+        lock.withLock {
+            guard accepting else { return }
+            let channel = channels[source.rawValue]
+            let now = ProcessInfo.processInfo.systemUptime
+            if channel.resampler.inputRate != rate { channel.resampler.reset(inputRate: rate) }
+            var offset = 0
+            while offset < count {
+                let n = min(count - offset, channel.resampler.maxInputFrames(forOutputCapacity: channel.capacity))
+                let written = channel.resampler.process(samples + offset, count: n,
+                    into: channel.scratch, capacity: channel.capacity)
+                defer { AudioMemory.erase(channel.scratch, count: written) }
+                guard channel.count + written <= channel.capacity,
+                      channel.count == 0 || now - channel.oldest < 0.5 else {
+                    overrun = true
+                    accepting = false
+                    for channel in channels { channel.clear() }
+                    return
+                }
+                if channel.count == 0 { channel.oldest = now }
+                channel.samples.advanced(by: channel.count).update(from: channel.scratch, count: written)
+                channel.count += written
+                channel.lastFeed = now
+                offset += n
+            }
+        }
+    }
+
+    func drain(flush: Bool = false) throws -> Chunk? {
+        try lock.withLock {
+            guard !overrun else { throw StreamingSpeechError.inputOverrun }
+            guard let format, channels.count == 2 else { return nil }
+            let rate = format.sampleRate
+            let desktop = channels[0], mic = channels[1]
+            let now = ProcessInfo.processInfo.systemUptime
+            for channel in channels where channel.count > 0 && now - channel.oldest > 0.5 {
+                overrun = true
+                accepting = false
+                for channel in channels { channel.clear() }
+                throw StreamingSpeechError.inputOverrun
+            }
+            let available: Int
+            if flush || desktop.count == 0 && now - desktop.lastFeed > 0.1
+                || mic.count == 0 && now - mic.lastFeed > 0.1 {
+                available = max(desktop.count, mic.count)
+            } else {
+                available = min(desktop.count, mic.count)
+            }
+            let n = min(Int(rate / 10), available)
+            guard n > 0 else { return nil }
+            let buffer = try ErasingPCMBuffer.make(format: format, count: n)
+            var desktopEnergy: Float = 0, micEnergy: Float = 0
+            for i in 0..<n {
+                let d: Float = i < desktop.count ? desktop.samples[i] : 0
+                let m: Float = i < mic.count ? mic.samples[i] : 0
+                let mixed = max(-1, min(1, d + m))
+                desktopEnergy += d * d
+                micEnergy += m * m
+                if let dst = buffer.floatChannelData?[0] { dst[i] = mixed }
+                else { buffer.int16ChannelData![0][i] = Int16(max(-32768, min(32767, mixed * 32768))) }
+            }
+            desktop.consume(min(n, desktop.count))
+            mic.consume(min(n, mic.count))
+            let start = CMTime(value: position, timescale: Int32(rate))
+            position += Int64(n)
+            return Chunk(buffer: buffer, startTime: start, duration: Double(n) / rate,
+                         desktopEnergy: desktopEnergy, micEnergy: micEnergy)
+        }
+    }
+}

@@ -227,7 +227,7 @@ final class SystemAudioTap {
         // 3) Spin up the off-realtime writer (ring + drain thread) BEFORE the
         //    IOProc starts producing. ~4 s of mono float headroom; the IOProc
         //    only ever copies into this ring, never touches the disk.
-        let ringFrames = max(Int(writeFmt.sampleRate * 4), 48_000)
+        let ringFrames = max(Int(writeFmt.sampleRate / 2), 4096)
         let newRing = FloatRingBuffer(capacityFrames: ringFrames)
         self.ring = newRing
         self.scratch = UnsafeMutablePointer<Float>.allocate(capacity: scratchCapacity)
@@ -567,6 +567,10 @@ final class SystemAudioTap {
             } else if let resampler, let out = self.resampleScratch {
                 let written = resampler.process(mono, count: chunk, into: out, capacity: resampleCapacity)
                 if written > 0 { ring.write(out, count: written) }
+                AudioMemory.erase(out, count: written)
+            }
+            if channelCount > 1, let scratch = self.scratch {
+                AudioMemory.erase(scratch, count: chunk)
             }
             offset += chunk
         }
@@ -601,10 +605,16 @@ final class SystemAudioTap {
                 frameCapacity: AVAudioFrameCount(chunkFrames)
             ), let dst = buffer.floatChannelData?[0] else { return }
 
+            var reportedOverrun = false
             while true {
+                if ring.totalDropped > 0, !reportedOverrun {
+                    reportedOverrun = true
+                    self?.onFatalError?(StreamingSpeechError.inputOverrun)
+                }
                 let stopRequested = self?.writerShouldStop.withLock { $0 } ?? true
                 let n = ring.read(into: dst, maxCount: chunkFrames)
                 if n > 0 {
+                    defer { AudioMemory.erase(dst, count: n) }
                     buffer.frameLength = AVAudioFrameCount(n)
                     let persisting = self?.writingEnabled.withLock { $0 } ?? false
                     do {
@@ -619,7 +629,7 @@ final class SystemAudioTap {
                 } else if stopRequested {
                     break               // empty AND asked to stop -> fully drained
                 } else {
-                    usleep(5_000)        // 5 ms; the ring holds several seconds of headroom
+                    usleep(5_000)
                 }
             }
         }

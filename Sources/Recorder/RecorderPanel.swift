@@ -32,16 +32,19 @@ struct RecorderPanel: View {
             Divider()
 
             controls
+                .disabled(model.state == .idle && !model.canStartRecording)
+
+            languagePicker
 
             audioHandlingChip
 
-            if model.state != .idle && !model.audioHandlingMode.retainsAudio {
+            if model.isCapturing && !model.audioHandlingMode.retainsAudio {
                 Label("Transcript only, no audio saved", systemImage: "eye.slash")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
-            if model.state != .idle && model.live.isSessionActive {
+            if model.live.isSessionActive {
                 Divider()
                 liveTranscriptSection
             }
@@ -101,7 +104,7 @@ struct RecorderPanel: View {
             Spacer(minLength: 8)
 
             // Elapsed time, only meaningful while recording / paused.
-            if model.state != .idle {
+            if model.isCapturing {
                 Text(formattedElapsed(model.elapsed))
                     .font(.system(.title3, design: .monospaced))
                     .foregroundStyle(model.state == .paused ? .secondary : .primary)
@@ -113,6 +116,8 @@ struct RecorderPanel: View {
     private var stateLabel: String {
         switch model.state {
         case .idle:      return "Ready"
+        case .preparing: return "Preparing speech"
+        case .finishing: return "Finishing"
         case .recording: return "Recording"
         case .paused:    return "Paused"
         }
@@ -121,6 +126,7 @@ struct RecorderPanel: View {
     private var stateSymbolName: String {
         switch model.state {
         case .idle:      return "circle"
+        case .preparing, .finishing: return "hourglass"
         case .recording: return "record.circle.fill"
         case .paused:    return "pause.circle.fill"
         }
@@ -128,7 +134,7 @@ struct RecorderPanel: View {
 
     private var stateColor: Color {
         switch model.state {
-        case .idle:      return .secondary
+        case .idle, .preparing, .finishing: return .secondary
         case .recording: return .red
         case .paused:    return .orange
         }
@@ -161,6 +167,7 @@ struct RecorderPanel: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help(model.audioHandlingMode.detail)
+        .disabled(model.state == .preparing || model.state == .finishing)
     }
 
     @ViewBuilder
@@ -213,6 +220,18 @@ struct RecorderPanel: View {
                 .keyboardShortcut("r", modifiers: [.command])
             }
 
+        case .preparing:
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Language assets may download on first use.").font(.caption)
+                Spacer()
+                Button("Cancel") { model.trashAndStop() }
+            }
+        case .finishing:
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Finishing and saving…").font(.caption)
+            }
         case .recording, .paused:
             HStack(spacing: 8) {
                 // Pause / Resume toggles between the two recording states.
@@ -264,7 +283,8 @@ struct RecorderPanel: View {
 
                 Spacer()
 
-                modelSwitcher
+                Text("Apple · \(TranscriptionLanguage.label(for: model.transcriptionLanguage))")
+                    .font(.caption).foregroundStyle(.secondary)
 
                 Button {
                     model.copyLiveTranscript()
@@ -282,61 +302,22 @@ struct RecorderPanel: View {
         }
     }
 
-    /// Quick model switcher: same catalog as Settings, usable mid-recording
-    /// (the engine reloads and the live window catches up).
-    private var modelSwitcher: some View {
-        Menu {
-            ForEach(WhisperModelOption.catalog) { option in
-                Button {
-                    model.whisperModel = option.id
-                } label: {
-                    if option.id == model.whisperModel {
-                        Label("\(option.label) (\(option.detail))", systemImage: "checkmark")
-                    } else {
-                        Text("\(option.label) (\(option.detail))")
-                    }
-                }
+    private var languagePicker: some View {
+        Picker("Speech language", selection: Binding(
+            get: { model.transcriptionLanguage },
+            set: { model.transcriptionLanguage = $0 }
+        )) {
+            ForEach(TranscriptionLanguage.options, id: \.id) { option in
+                Text(option.label).tag(option.id)
             }
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "cpu")
-                Text(WhisperModelOption.label(for: model.whisperModel))
-            }
-            .font(.caption)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Transcription model")
+        .font(.caption)
+        .disabled(!model.canStartRecording)
     }
 
     @ViewBuilder
     private var engineStatusLine: some View {
-        switch model.live.engineState {
-        case .downloading(let name, let fraction):
-            HStack(spacing: 6) {
-                ProgressView(value: fraction)
-                    .controlSize(.small)
-                Text("Downloading \(WhisperModelOption.label(for: name)) model… \(Int(fraction * 100))%")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        case .loading(let name):
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Loading \(WhisperModelOption.label(for: name)) model…")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        case .failed(let message):
-            engineWarning(message)
-        case .ready:
-            if let message = model.live.loadFailureMessage {
-                engineWarning(message)
-            }
-        case .unloaded, .notDownloaded:
-            EmptyView()
-        }
+        if let message = model.live.live.failureMessage { engineWarning(message) }
     }
 
     private func engineWarning(_ message: String) -> some View {
@@ -575,7 +556,7 @@ struct RecorderPanel: View {
                         MeetingRow(
                             meeting: meeting,
                             inProgress: meeting.isInProgress(Date()),
-                            canStart: model.state == .idle,
+                            canStart: model.canStartRecording,
                             onRecord: { model.startRecording(meeting: meeting) }
                         )
                     }

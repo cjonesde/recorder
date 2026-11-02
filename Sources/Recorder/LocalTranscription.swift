@@ -52,36 +52,34 @@ struct WhisperModelOption: Identifiable, Equatable {
     }
 }
 
-/// Selectable transcription languages. "auto" detects the language per window,
-/// which handles mixed German/English meetings.
 enum TranscriptionLanguage {
     static let options: [(id: String, label: String)] = [
-        ("auto", "Auto-detect"),
-        ("de", "German"),
-        ("en", "English"),
-        ("fr", "French"),
-        ("es", "Spanish"),
-        ("it", "Italian"),
+        ("de-DE", "German"), ("en-US", "English"), ("fr-FR", "French"),
+        ("es-ES", "Spanish"), ("it-IT", "Italian")
     ]
+
+    static func selection(for stored: String, preferred: String = Locale.preferredLanguages.first ?? "en") -> String {
+        let code = stored.isEmpty || stored == "auto" ? preferred : stored
+        return options.first { $0.id.prefix(2) == code.prefix(2) }?.id ?? "en-US"
+    }
+
+    static func label(for id: String) -> String { options.first { $0.id == id }?.label ?? id }
 }
 
 // MARK: - LocalTranscriptionEngine
 
-/// On-device transcription via WhisperKit (CoreML Whisper on Apple Silicon).
-///
-/// Owns the model host, the live streaming transcriber, and the offline path that runs
-/// a saved `audio.m4a` through the same model with on-device diarization.
+/// Apple handles live speech; WhisperKit and SpeakerKit handle retained audio files.
 @MainActor
 @Observable
 final class LocalTranscriptionEngine {
 
     let host: WhisperModelHost
-    let live: LiveTranscriber
+    let live: AppleLiveTranscriber
 
     init() {
         let host = WhisperModelStorage.makeHost()
         self.host = host
-        self.live = LiveTranscriber(host: host)
+        self.live = AppleLiveTranscriber()
     }
 
     // MARK: Model state
@@ -103,22 +101,19 @@ final class LocalTranscriptionEngine {
     var revision: Int { live.revision }
     var hasText: Bool { live.hasText }
 
-    var language: String? {
-        get { live.language }
-        set { live.language = newValue }
-    }
+    var language: String?
 
     var labelSpeakers: Bool {
         get { live.labelSpeakers }
         set { live.labelSpeakers = newValue }
     }
 
-    nonisolated var inbox: SampleInbox { live.inbox }
+    nonisolated var inbox: StreamingAudioInput { live.inbox }
 
-    func beginSession() { live.beginSession() }
+    func beginSession(language: String) async throws { try await live.start(language: language) }
     func cancelSession() { live.cancelSession() }
 
-    func endSession() async -> LiveTranscriber.LiveSessionResult {
+    func endSession() async -> AppleLiveTranscriber.SessionResult {
         await live.endSession()
     }
 
@@ -142,10 +137,10 @@ final class LocalTranscriptionEngine {
     private func decodingOptions(forFile: Bool) -> DecodingOptions {
         DecodingOptions(
             task: .transcribe,
-            language: live.language,
+            language: language,
             temperatureFallbackCount: 3,
             usePrefillPrompt: true,
-            detectLanguage: live.language == nil,
+            detectLanguage: language == nil,
             skipSpecialTokens: true,
             suppressBlank: true,
             chunkingStrategy: forFile ? .vad : nil
