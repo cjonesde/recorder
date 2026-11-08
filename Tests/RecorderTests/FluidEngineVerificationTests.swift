@@ -138,4 +138,54 @@ final class FluidEngineVerificationTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
             .write(to: URL(fileURLWithPath: output))
     }
+
+    func testHeldAudioStaysBoundedOverFiveMinutes() async throws {
+        let env = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(env["RECORDER_FLUID_LONG"] == "1")
+        let kind = try XCTUnwrap(env["RECORDER_FLUID_ENGINE"].flatMap(LiveEngineKind.init(rawValue:)))
+        try XCTSkipIf(kind == .apple, "Apple does not hold audio in a FluidAudio buffer")
+        let ceiling = kind == .nemotron ? 36.0 : 38.0
+        let audio = try XCTUnwrap(env["RECORDER_TEST_AUDIO"])
+        let fixture = try AudioProcessor.loadAudioAsFloatArray(fromPath: audio)
+        let engine = LocalTranscriptionEngine()
+        await engine.select(kind)
+        XCTAssertEqual(engine.engine.kind, kind)
+        engine.labelSpeakers = false
+        try await engine.beginSession(language: "de-DE")
+        defer { engine.cancelSession() }
+        let silence = [Float](repeating: 0, count: 1600)
+        let totalSeconds = 300
+        let totalSamples = totalSeconds * 16000
+        let start = ProcessInfo.processInfo.systemUptime
+        var held: [Double] = []
+        var nextSampleSecond = 1
+        var position = 0
+        for offset in stride(from: 0, to: totalSamples, by: 1600) {
+            let delay = start + Double(offset + 1600) / 16000 - ProcessInfo.processInfo.systemUptime
+            if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
+            fixture.withUnsafeBufferPointer {
+                engine.inbox.ingest(.desktop, $0.baseAddress! + position, count: 1600, rate: 16000)
+            }
+            silence.withUnsafeBufferPointer {
+                engine.inbox.ingest(.mic, $0.baseAddress!, count: 1600, rate: 16000)
+            }
+            position += 1600
+            if position + 1600 > fixture.count { position = 0 }
+            if Double(offset + 1600) / 16000 >= Double(nextSampleSecond) {
+                held.append(engine.engine.diagnostics().heldAudioSeconds ?? 0)
+                nextSampleSecond += 1
+            }
+        }
+        XCTAssertEqual(held.count, totalSeconds)
+        func mean(_ values: ArraySlice<Double>) -> Double { values.reduce(0, +) / Double(max(values.count, 1)) }
+        let early = mean(held[60..<120])
+        let late = mean(held.suffix(60))
+        let peak = held.max() ?? 0
+        print("Bounded audio \(kind.rawValue): samples=\(held.count) min=\(String(format: "%.2f", held.min() ?? 0)) "
+              + "mean=\(String(format: "%.2f", mean(held[...]))) max=\(String(format: "%.2f", peak)) "
+              + "mean60to120=\(String(format: "%.2f", early)) meanLast60=\(String(format: "%.2f", late)) "
+              + "trend=\(String(format: "%.2f", late - early)) ceiling=\(ceiling)")
+        XCTAssertLessThanOrEqual(peak, ceiling, "held audio exceeded the \(kind.rawValue) ceiling")
+        XCTAssertLessThan(late - early, 1, "held audio keeps growing")
+    }
 }
