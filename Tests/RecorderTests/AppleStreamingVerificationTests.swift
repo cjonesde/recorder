@@ -42,7 +42,7 @@ final class AppleStreamingVerificationTests: XCTestCase {
         let finishStart = ProcessInfo.processInfo.systemUptime
         let final = await engine.endSession()
         let finishSeconds = ProcessInfo.processInfo.systemUptime - finishStart
-        XCTAssertTrue(final.complete, engine.live.failureMessage ?? "incomplete")
+        XCTAssertTrue(final.complete, engine.engine.failureMessage ?? "incomplete")
         XCTAssertFalse(final.lines.isEmpty)
         XCTAssertEqual(engine.inbox.pendingFrames, 0)
         XCTAssertEqual(engine.engineState, .unloaded, "Live transcription must not load Whisper")
@@ -62,9 +62,11 @@ final class AppleStreamingVerificationTests: XCTestCase {
     func testCancelAndRestartRejectsOldTranscript() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["RECORDER_APPLE_STREAM"] == "1")
         let live = AppleLiveTranscriber()
-        try await live.start(language: "en-US")
+        _ = try await live.prepare(language: "en-US", progress: { _ in })
+        try live.startSession()
         live.cancelSession()
-        try await live.start(language: "en-US")
+        _ = try await live.prepare(language: "en-US", progress: { _ in })
+        try live.startSession()
         let result = await live.endSession()
         XCTAssertTrue(result.complete, live.failureMessage ?? "incomplete")
         XCTAssertTrue(result.lines.isEmpty)

@@ -21,7 +21,7 @@ final class LiveRecordingStaysUpTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
 
         try await Task.sleep(for: .seconds(6))
-        let failure = model.live.live.failureMessage
+        let failure = model.live.engine.failureMessage
         let state = model.state
         model.saveAndStop()
         try await Task.sleep(for: .seconds(4))

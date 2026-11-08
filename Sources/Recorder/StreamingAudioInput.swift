@@ -112,6 +112,13 @@ final class StreamingAudioInput: @unchecked Sendable {
 
     var pendingFrames: Int { lock.withLock { channels.reduce(0) { $0 + $1.count } } }
 
+    var pendingSeconds: Double {
+        lock.withLock {
+            guard let format else { return 0 }
+            return Double(channels.map(\.count).max() ?? 0) / format.sampleRate
+        }
+    }
+
     func begin(format: AVAudioFormat) {
         lock.withLock {
             channels = [Channel(rate: format.sampleRate), Channel(rate: format.sampleRate)]

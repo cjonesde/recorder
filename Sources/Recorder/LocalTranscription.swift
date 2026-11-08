@@ -73,13 +73,46 @@ enum TranscriptionLanguage {
 @Observable
 final class LocalTranscriptionEngine {
 
-    let host: WhisperModelHost
-    let live: AppleLiveTranscriber
+    typealias EngineFactory = @MainActor @Sendable (LiveEngineKind) -> any LiveSpeechEngine
 
-    init() {
+    nonisolated static let defaultFactory: EngineFactory = { kind in
+        switch kind {
+        case .apple: return AppleLiveTranscriber()
+        case .nemotron, .parakeet: return UnavailableLiveEngine(kind: kind)
+        }
+    }
+
+    let host: WhisperModelHost
+    private(set) var engine: any LiveSpeechEngine
+    private(set) var lastPreparation: PreparationInfo?
+    nonisolated let router = LiveInboxRouter()
+    @ObservationIgnored private let factory: EngineFactory
+    @ObservationIgnored var onFailure: (() -> Void)?
+
+    init(factory: @escaping EngineFactory = LocalTranscriptionEngine.defaultFactory) {
         let host = WhisperModelStorage.makeHost()
         self.host = host
-        self.live = AppleLiveTranscriber()
+        self.factory = factory
+        self.engine = factory(.apple)
+        attach(engine)
+    }
+
+    func select(_ kind: LiveEngineKind) async {
+        guard kind != engine.kind else { return }
+        let previous = engine
+        router.set(nil)
+        previous.onFailure = nil
+        await previous.unload()
+        lastPreparation = nil
+        let next = factory(kind)
+        engine = next
+        attach(next)
+    }
+
+    private func attach(_ engine: any LiveSpeechEngine) {
+        engine.labelSpeakers = labelSpeakers
+        engine.onFailure = { [weak self] in self?.onFailure?() }
+        router.set(engine.inbox)
     }
 
     // MARK: Model state
@@ -95,30 +128,36 @@ final class LocalTranscriptionEngine {
 
     // MARK: Live surface
 
-    var confirmedLines: [TranscriptLine] { live.confirmedLines }
-    var hypothesis: String { live.hypothesis }
-    var isSessionActive: Bool { live.isSessionActive }
-    var revision: Int { live.revision }
-    var hasText: Bool { live.hasText }
+    var confirmedLines: [TranscriptLine] { engine.confirmedLines }
+    var hypothesis: String { engine.hypothesis }
+    var isSessionActive: Bool { engine.isSessionActive }
+    var revision: Int { engine.revision }
+    var hasText: Bool { !confirmedLines.isEmpty || !hypothesis.isEmpty }
 
     var language: String?
 
-    var labelSpeakers: Bool {
-        get { live.labelSpeakers }
-        set { live.labelSpeakers = newValue }
+    var labelSpeakers = true {
+        didSet { engine.labelSpeakers = labelSpeakers }
     }
 
-    nonisolated var inbox: StreamingAudioInput { live.inbox }
+    var inbox: StreamingAudioInput { engine.inbox }
 
-    func beginSession(language: String) async throws { try await live.start(language: language) }
-    func cancelSession() { live.cancelSession() }
+    func beginSession(language: String, progress: @escaping @Sendable (Double?) -> Void = { _ in }) async throws {
+        let info = try await engine.prepare(language: language, progress: progress)
+        lastPreparation = info
+        try Task.checkCancellation()
+        try engine.startSession()
+    }
 
-    func endSession() async -> AppleLiveTranscriber.SessionResult {
-        await live.endSession()
+    func cancelSession() { engine.cancelSession() }
+
+    func endSession() async -> LiveSessionResult {
+        await engine.endSession()
     }
 
     func transcript(includeHypothesis: Bool) -> String {
-        live.transcript(includeHypothesis: includeHypothesis)
+        (confirmedLines.map(\.markdown) + (includeHypothesis && !hypothesis.isEmpty ? [hypothesis] : []))
+            .joined(separator: "\n\n")
     }
 
     // MARK: Private state

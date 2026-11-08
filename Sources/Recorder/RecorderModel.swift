@@ -21,7 +21,11 @@ final class RecorderModel {
 
     /// On-device transcription engines. Exposed so the panel can
     /// render the live transcript and engine status directly.
-    let live = LocalTranscriptionEngine()
+    let live: LocalTranscriptionEngine
+
+    init(engineFactory: @escaping LocalTranscriptionEngine.EngineFactory = LocalTranscriptionEngine.defaultFactory) {
+        live = LocalTranscriptionEngine(factory: engineFactory)
+    }
 
     // MARK: - Persisted preferences (mirrored to UserDefaults via Preferences)
 
@@ -198,15 +202,15 @@ final class RecorderModel {
 
         // Feed both captures into the live-transcription inbox. The inbox is a
         // no-op outside an active session, so the hooks stay wired permanently.
-        let inbox = live.inbox
+        let router = live.router
         tap.onSamples = { samples, count, rate in
-            inbox.ingest(.desktop, samples, count: count, rate: rate)
+            router.ingest(.desktop, samples, count: count, rate: rate)
         }
         mic.onSamples = { samples, count, rate in
-            inbox.ingest(.mic, samples, count: count, rate: rate)
+            router.ingest(.mic, samples, count: count, rate: rate)
         }
 
-        live.live.onFailure = { [weak self] in
+        live.onFailure = { [weak self] in
             guard let self, self.isCapturing else { return }
             self.saveAndStop()
         }
@@ -214,7 +218,7 @@ final class RecorderModel {
 
     private func handleCaptureFailure(_ error: Error) {
         guard isCapturing else { return }
-        if live.isSessionActive { live.live.captureFailed(error) }
+        if live.isSessionActive { live.engine.captureFailed(error) }
         else { saveAndStop() }
         statusMessage = "Capture stopped: \(error.localizedDescription)"
     }
@@ -248,13 +252,23 @@ final class RecorderModel {
 
         let language = transcriptionLanguage
         let wantsLive = liveTranscriptionEnabled
+        let kind = liveEngine
         state = .preparing
-        statusMessage = wantsLive ? "Preparing Apple speech for \(TranscriptionLanguage.label(for: language))…" : "Starting capture…"
+        statusMessage = wantsLive ? Self.preparingMessage(kind, progress: nil) : "Starting capture…"
         startupTask = Task { [weak self] in
             guard let self else { return }
             do {
                 try Task.checkCancellation()
-                if wantsLive { try await self.live.beginSession(language: language) }
+                if wantsLive {
+                    await self.live.select(kind)
+                    try Task.checkCancellation()
+                    try await self.live.beginSession(language: language, progress: { [weak self] fraction in
+                        Task { @MainActor in
+                            guard let self, self.state == .preparing else { return }
+                            self.statusMessage = Self.preparingMessage(kind, progress: fraction)
+                        }
+                    })
+                }
                 try Task.checkCancellation()
                 guard self.state == .preparing else { return }
                 self.startPreparedRecording(meeting: meeting, mode: mode)
@@ -262,10 +276,15 @@ final class RecorderModel {
                 guard !Task.isCancelled else { return }
                 self.live.cancelSession()
                 self.state = .idle
-                self.statusMessage = "Could not prepare speech: \(error.localizedDescription)"
+                self.statusMessage = "Could not prepare \(kind.label): \(error.localizedDescription)"
             }
             self.startupTask = nil
         }
+    }
+
+    private static func preparingMessage(_ kind: LiveEngineKind, progress: Double?) -> String {
+        guard let progress else { return "Preparing \(kind.label)…" }
+        return "Preparing \(kind.label)… \(Int((min(max(progress, 0), 1) * 100).rounded()))%"
     }
 
     private func startPreparedRecording(meeting: Meeting?, mode: AudioHandlingMode) {
@@ -426,7 +445,7 @@ final class RecorderModel {
         // Finalize the live transcript (transcribes the remaining tail) in
         // parallel with the mix. Only awaited when a transcript will actually
         // be written, so an off toggle or a slow model never delays the save.
-        let liveTask: Task<AppleLiveTranscriber.SessionResult, Never>? = live.isSessionActive
+        let liveTask: Task<LiveSessionResult, Never>? = live.isSessionActive
             ? Task { [live] in await live.endSession() }
             : nil
 
@@ -761,7 +780,7 @@ final class RecorderModel {
                 attendees: pending.attendees,
                 startedAt: pending.startedAt,
                 audioName: pending.audioURL?.lastPathComponent,
-                model: "Apple SpeechTranscriber (\(live.live.localeIdentifier))"
+                model: live.engine.displayName
             ),
             pending: pending,
             keepStatus: keepStatus

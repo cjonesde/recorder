@@ -13,7 +13,9 @@ struct StreamingTranscript {
 
     private(set) var lines: [TranscriptLine] = []
     private var provisional: [Part] = []
-    private var finalEnd: TimeInterval = 0
+    private(set) var finalEnd: TimeInterval = 0
+
+    var latestProvisionalEnd: Double? { provisional.map(\.end).max() }
 
     var hypothesis: String { provisional.sorted { $0.start < $1.start }.map(\.text).joined(separator: " ") }
 
@@ -49,9 +51,11 @@ final class StreamingEnergyLog: @unchecked Sendable {
 
     private let lock = NSLock()
     private var entries: [Entry] = []
+    private var submitted: TimeInterval = 0
 
     func record(_ chunk: StreamingAudioInput.Chunk) {
         lock.withLock {
+            submitted = max(submitted, chunk.start + chunk.duration)
             entries.append(Entry(start: chunk.start, end: chunk.start + chunk.duration,
                                  desktop: chunk.desktopEnergy, mic: chunk.micEnergy))
             entries.removeAll { $0.end < chunk.start - 60 }
@@ -59,6 +63,10 @@ final class StreamingEnergyLog: @unchecked Sendable {
     }
 
     func clear() { lock.withLock { entries = [] } }
+
+    var submittedThrough: TimeInterval { lock.withLock { submitted } }
+
+    func resetSubmitted() { lock.withLock { submitted = 0 } }
 
     func sums(start: TimeInterval, end: TimeInterval) -> (desktop: Float, mic: Float)? {
         lock.withLock {
@@ -75,12 +83,11 @@ final class StreamingEnergyLog: @unchecked Sendable {
 
 @MainActor
 @Observable
-final class AppleLiveTranscriber {
-    struct SessionResult {
-        let lines: [TranscriptLine]
-        let complete: Bool
-        var isEmpty: Bool { lines.isEmpty }
-    }
+final class AppleLiveTranscriber: LiveSpeechEngine {
+    let kind = LiveEngineKind.apple
+    let finalizationTimeout: Duration = .seconds(10)
+    var displayName: String { "Apple SpeechTranscriber (\(localeIdentifier))" }
+    var isLoaded: Bool { loadedLocale != nil }
 
     private(set) var isSessionActive = false
     private(set) var revision = 0
@@ -93,10 +100,12 @@ final class AppleLiveTranscriber {
     private var text = StreamingTranscript()
     var confirmedLines: [TranscriptLine] { text.lines }
     var hypothesis: String { text.hypothesis }
-    var hasText: Bool { !confirmedLines.isEmpty || !hypothesis.isEmpty }
 
     nonisolated let inbox = StreamingAudioInput()
     @ObservationIgnored private var analyzer: SpeechAnalyzer?
+    @ObservationIgnored private var module: SpeechTranscriber?
+    @ObservationIgnored private var format: AVAudioFormat?
+    @ObservationIgnored private var loadedLocale: String?
     @ObservationIgnored private var continuation: AsyncStream<AnalyzerInput>.Continuation?
     @ObservationIgnored private var analysisTask: Task<Void, Never>?
     @ObservationIgnored private var resultTask: Task<Void, Never>?
@@ -104,7 +113,9 @@ final class AppleLiveTranscriber {
     @ObservationIgnored private var generation = 0
     private let energyLog = StreamingEnergyLog()
 
-    func start(language: String) async throws {
+    func prepare(language: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> PreparationInfo {
+        let clock = ContinuousClock()
+        let began = clock.now
         try Task.checkCancellation()
         cancelSession()
         let generation = self.generation
@@ -133,9 +144,24 @@ final class AppleLiveTranscriber {
         }
 
         self.analyzer = analyzer
+        self.module = module
+        self.format = format
         localeIdentifier = locale.identifier
+        let firstLoad = loadedLocale != locale.identifier
+        loadedLocale = locale.identifier
+        let elapsed = clock.now - began
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        return PreparationInfo(loadSeconds: seconds, firstLoad: firstLoad, modelBytesOnDisk: nil, computeUnits: "Managed by macOS")
+    }
+
+    func startSession() throws {
+        guard !isSessionActive, let analyzer, let module, let format else {
+            throw LiveStopError(reason: .engineError, detail: "Apple speech was not prepared")
+        }
+        let generation = self.generation
         let (inputs, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingOldest(4))
         self.continuation = continuation
+        energyLog.resetSubmitted()
         inbox.begin(format: format)
         isSessionActive = true
 
@@ -174,9 +200,9 @@ final class AppleLiveTranscriber {
         pump.start()
     }
 
-    func endSession() async -> SessionResult {
+    func endSession() async -> LiveSessionResult {
         guard isSessionActive, let analyzer else {
-            return SessionResult(lines: confirmedLines, complete: failureMessage == nil)
+            return LiveSessionResult(lines: confirmedLines, complete: failureMessage == nil, stopReason: stopReason)
         }
         let generation = self.generation
         inbox.end()
@@ -185,8 +211,9 @@ final class AppleLiveTranscriber {
         inbox.discard()
         continuation?.finish()
         continuation = nil
+        let finalizationTimeout = finalizationTimeout
         let timeout = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            do { try await Task.sleep(for: finalizationTimeout) } catch { return }
             self?.fail(LiveStopError(reason: .finalizationTimedOut, detail: nil), generation: generation)
             await analyzer.cancelAndFinishNow()
         }
@@ -196,14 +223,16 @@ final class AppleLiveTranscriber {
         await resultTask?.value
         timeout.cancel()
         await analyzer.cancelAndFinishNow()
-        guard generation == self.generation else { return SessionResult(lines: [], complete: false) }
+        guard generation == self.generation else { return LiveSessionResult(lines: [], complete: false, stopReason: nil) }
         if let failureMessage { text.markIncomplete(failureMessage); revision += 1 }
         self.analyzer = nil
+        module = nil
+        format = nil
         analysisTask = nil
         resultTask = nil
         energyLog.clear()
         isSessionActive = false
-        return SessionResult(lines: confirmedLines, complete: failureMessage == nil)
+        return LiveSessionResult(lines: confirmedLines, complete: failureMessage == nil, stopReason: stopReason)
     }
 
     func captureFailed(_ error: Error) { fail(error, generation: generation) }
@@ -218,6 +247,8 @@ final class AppleLiveTranscriber {
         continuation = nil
         if let analyzer { Task { await analyzer.cancelAndFinishNow() } }
         analyzer = nil
+        module = nil
+        format = nil
         pump = nil
         analysisTask = nil
         resultTask = nil
@@ -229,9 +260,20 @@ final class AppleLiveTranscriber {
         revision += 1
     }
 
-    func transcript(includeHypothesis: Bool) -> String {
-        (confirmedLines.map(\.markdown) + (includeHypothesis && !hypothesis.isEmpty ? [hypothesis] : []))
-            .joined(separator: "\n\n")
+    func diagnostics() -> EngineDiagnostics {
+        EngineDiagnostics(
+            submittedThroughSeconds: energyLog.submittedThrough,
+            latestProvisionalEnd: text.latestProvisionalEnd,
+            latestFinalEnd: text.finalEnd > 0 ? text.finalEnd : nil,
+            heldAudioSeconds: inbox.pendingSeconds,
+            heldAudioQuality: .measured,
+            rows: [DiagnosticRow(label: "Inside Apple", value: "unknown", quality: .unknown)]
+        )
+    }
+
+    func unload() async {
+        cancelSession()
+        loadedLocale = nil
     }
 
     private func fail(_ error: Error, generation: Int) {

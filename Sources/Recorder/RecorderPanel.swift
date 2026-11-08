@@ -317,7 +317,7 @@ struct RecorderPanel: View {
 
     @ViewBuilder
     private var engineStatusLine: some View {
-        if let message = model.live.live.failureMessage { engineWarning(message) }
+        if let message = model.live.engine.failureMessage { engineWarning(message) }
     }
 
     private func engineWarning(_ message: String) -> some View {
