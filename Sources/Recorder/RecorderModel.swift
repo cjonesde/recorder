@@ -98,6 +98,7 @@ final class RecorderModel {
     var isSamplingDiagnostics: Bool { diagnosticsTimer != nil }
     @ObservationIgnored private var diagnosticsTimer: Timer?
     @ObservationIgnored private var heartbeat: MainThreadHeartbeat?
+    @ObservationIgnored private var diagnosticsFolder: URL?
 
     /// Saved voiceprints. Observed, so the Speakers pane updates as profiles change.
     let speakerStore = SpeakerProfileStore()
@@ -270,7 +271,7 @@ final class RecorderModel {
         let kind = liveEngine
         state = .preparing
         statusMessage = wantsLive ? Self.preparingMessage(kind, progress: nil) : "Starting capture…"
-        let diagnostics = beginDiagnostics(engine: kind, settings: [
+        let diagnostics = beginDiagnostics(engine: kind, liveTranscription: wantsLive, settings: [
             "language": language,
             "liveTranscription": String(wantsLive),
             "audioHandling": mode.rawValue,
@@ -331,6 +332,7 @@ final class RecorderModel {
         currentSession = session
         activeMeeting = meeting
         activeMode = mode
+        if diagnostics != nil { diagnosticsFolder = session.folderURL }
 
         // Clear any previous recording's transcription UI.
         transcriptionState = .idle
@@ -476,7 +478,6 @@ final class RecorderModel {
         state = .finishing
         diagnostics?.setPhase(.finishing)
         sampleDiagnostics()
-        stopDiagnosticsSampling()
 
         let mode = activeMode
         let folderURL = session.folderURL
@@ -489,14 +490,16 @@ final class RecorderModel {
         // be written, so an off toggle or a slow model never delays the save.
         let diagnostics = self.diagnostics
         let liveTask: Task<LiveSessionResult, Never>? = live.isSessionActive
-            ? Task { [live] in
+            ? Task { [live, weak self] in
                 let finalizingSince = ProcessInfo.processInfo.systemUptime
                 let result = await live.endSession()
                 if let reason = result.stopReason { diagnostics?.recordStop(reason) }
                 diagnostics?.record("finalized", detail: String(format: "%.2f s", ProcessInfo.processInfo.systemUptime - finalizingSince))
+                self?.finishDiagnostics(diagnostics)
                 return result
             }
             : nil
+        if liveTask == nil { finishDiagnostics(diagnostics) }
 
         // No audio was ever written, so there is nothing to mix and nothing to polish.
         guard mode.retainsAudio,
@@ -674,8 +677,9 @@ final class RecorderModel {
         elapsedTimer = timer
     }
 
-    private func beginDiagnostics(engine: LiveEngineKind, settings: [String: String]) -> DiagnosticsRecorder? {
+    private func beginDiagnostics(engine: LiveEngineKind, liveTranscription: Bool, settings: [String: String]) -> DiagnosticsRecorder? {
         stopDiagnosticsSampling()
+        diagnosticsFolder = nil
         guard showDebugInfo else {
             diagnostics = nil
             return nil
@@ -687,7 +691,8 @@ final class RecorderModel {
             source: LiveSystemMetrics(),
             now: { ProcessInfo.processInfo.systemUptime },
             engine: engine,
-            settings: settings
+            settings: settings,
+            measuresSpeechService: liveTranscription && engine == .apple
         )
         recorder.record("record pressed", detail: nil)
         diagnostics = recorder
@@ -705,7 +710,13 @@ final class RecorderModel {
         guard isSamplingDiagnostics, let diagnostics, let heartbeat else { return }
         let stall = heartbeat.longestStall
         heartbeat.resetLongest()
-        diagnostics.sample(engine: live.engine.diagnostics(), stall: stall, folder: currentSession?.folderURL)
+        diagnostics.sample(engine: live.engine.diagnostics(), stall: stall, folder: diagnosticsFolder)
+    }
+
+    private func finishDiagnostics(_ recorder: DiagnosticsRecorder?) {
+        guard let recorder, diagnostics === recorder else { return }
+        sampleDiagnostics()
+        stopDiagnosticsSampling()
     }
 
     private func stopDiagnosticsSampling() {

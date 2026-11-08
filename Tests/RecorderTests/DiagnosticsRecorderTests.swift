@@ -91,6 +91,36 @@ final class DiagnosticsRecorderTests: XCTestCase {
         XCTAssertEqual(rec.samples[0].heldAudioQuality, .measured)
     }
 
+    func testFailedReadsStayUnknownInsteadOfLookingMeasured() {
+        let unknown = MetricsReading(footprintBytes: nil, speechServiceFootprintBytes: nil, pressure: nil, swapUsedBytes: nil, swapIns: nil, swapOuts: nil)
+        let rec = DiagnosticsRecorder(source: FakeMetrics([reading(swap: 9_000, swapIns: 5, swapOuts: 5), unknown, reading(swap: 9_500, swapIns: 6, swapOuts: 8)]), now: { 0 }, engine: .parakeet, settings: [:])
+        rec.sample(engine: diag(), stall: 0, folder: nil)
+        XCTAssertEqual(rec.samples[0].reading, unknown)
+        XCTAssertNil(rec.samples[0].swapGrowthBytes)
+        XCTAssertNil(rec.samples[0].swapInsSinceStart)
+        XCTAssertNil(rec.samples[0].swapOutsSinceStart)
+        rec.sample(engine: diag(), stall: 0, folder: nil)
+        XCTAssertEqual(rec.samples[1].swapGrowthBytes, 500)
+        XCTAssertEqual(rec.samples[1].swapInsSinceStart, 1)
+        XCTAssertEqual(rec.samples[1].swapOutsSinceStart, 3)
+    }
+
+    func testUnknownBaselineLeavesSwapGrowthUnknown() {
+        let unknown = MetricsReading(footprintBytes: nil, speechServiceFootprintBytes: nil, pressure: nil, swapUsedBytes: nil, swapIns: nil, swapOuts: nil)
+        let rec = DiagnosticsRecorder(source: FakeMetrics([unknown, reading(swap: 9_000, swapIns: 5, swapOuts: 5)]), now: { 0 }, engine: .parakeet, settings: [:])
+        rec.sample(engine: diag(), stall: 0, folder: nil)
+        XCTAssertNil(rec.samples[0].swapGrowthBytes)
+        XCTAssertNil(rec.samples[0].swapInsSinceStart)
+        XCTAssertNil(rec.samples[0].swapOutsSinceStart)
+    }
+
+    func testAppleWithoutLiveTranscriptionDoesNotAskForTheSpeechService() {
+        let metrics = FakeMetrics([reading()])
+        let rec = DiagnosticsRecorder(source: metrics, now: { 0 }, engine: .apple, settings: [:], measuresSpeechService: false)
+        rec.sample(engine: diag(), stall: 0, folder: nil)
+        XCTAssertEqual(metrics.includeSpeechServiceRequests, [false, false])
+    }
+
     func testUnreadableSpeechServiceStaysUnknownNotRecorderMemory() {
         let rec = DiagnosticsRecorder(source: FakeMetrics([reading(footprint: 600, speech: nil)]), now: { 0 }, engine: .apple, settings: [:])
         rec.sample(engine: diag(), stall: 0, folder: nil)
@@ -170,10 +200,109 @@ final class DiagnosticsRecorderTests: XCTestCase {
 
 @MainActor
 final class DiagnosticsWiringTests: XCTestCase {
+    private static let touchedKeys = ["liveEngine", "showDebugInfo", "liveTranscriptionEnabled", "audioHandlingMode", "silenceAutoStopEnabled", "transcriptionLanguage"]
+    private var savedDefaults: [String: Any] = [:]
+
+    override func setUp() {
+        super.setUp()
+        savedDefaults = [:]
+        for key in Self.touchedKeys {
+            if let value = UserDefaults.standard.object(forKey: key) { savedDefaults[key] = value }
+        }
+    }
+
     override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: "liveEngine")
-        UserDefaults.standard.removeObject(forKey: "showDebugInfo")
+        for key in Self.touchedKeys {
+            if let value = savedDefaults[key] { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
         super.tearDown()
+    }
+
+    private func waitUntil(_ condition: () -> Bool, timeout: Duration = .seconds(5)) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    func testAppleWithoutLiveTranscriptionDoesNotMeasureTheSpeechService() {
+        let model = RecorderModel(engineFactory: { FakeLiveEngine(kind: $0) })
+        model.liveEngine = .apple
+        model.liveTranscriptionEnabled = false
+        model.audioHandlingMode = .keepAudio
+        model.showDebugInfo = true
+        model.startRecording(meeting: nil)
+        let diagnostics = model.diagnostics
+        model.trashAndStop()
+        XCTAssertEqual(diagnostics?.measuresSpeechService, false)
+    }
+
+    func testAppleWithLiveTranscriptionMeasuresTheSpeechService() {
+        let model = RecorderModel(engineFactory: { FakeLiveEngine(kind: $0, prepareDelay: .milliseconds(300)) })
+        model.liveEngine = .apple
+        model.liveTranscriptionEnabled = true
+        model.showDebugInfo = true
+        model.startRecording(meeting: nil)
+        let diagnostics = model.diagnostics
+        model.trashAndStop()
+        XCTAssertEqual(diagnostics?.measuresSpeechService, true)
+    }
+
+    func testEngineFailureStopReasonReachesStops() async throws {
+        let model = RecorderModel(engineFactory: { FakeLiveEngine(kind: $0, prepareDelay: .seconds(2)) })
+        model.configureCaptures()
+        model.liveEngine = .apple
+        model.liveTranscriptionEnabled = true
+        model.showDebugInfo = true
+        model.startRecording(meeting: nil)
+        let engine = try XCTUnwrap(model.live.engine as? FakeLiveEngine)
+        engine.captureFailed(LiveStopError(reason: .desktopRingOverflow, detail: nil))
+        XCTAssertEqual(model.diagnostics?.stops, [.desktopRingOverflow])
+        model.trashAndStop()
+    }
+
+    func testSuccessfulRecordingSamplesThroughFinalizationThenStops() async throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RECORDER_LIVE_MODES"] == "1",
+            "set RECORDER_LIVE_MODES=1 to record from the real microphone and desktop tap"
+        )
+        let model = RecorderModel(engineFactory: {
+            FakeLiveEngine(kind: $0, endSessionDelay: .milliseconds(2500), endSessionStopReason: .finalizationTimedOut)
+        })
+        model.configureCaptures()
+        model.silenceAutoStopEnabled = false
+        model.liveTranscriptionEnabled = true
+        model.audioHandlingMode = .transcriptOnly
+        model.liveEngine = .nemotron
+        model.showDebugInfo = true
+
+        model.startRecording(meeting: nil)
+        try await waitUntil { model.state != .preparing }
+        let folder = try XCTUnwrap(model.currentSession?.folderURL, "did not start: \(model.statusMessage ?? "-")")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let diagnostics = try XCTUnwrap(model.diagnostics)
+        XCTAssertEqual(model.state, .recording)
+        XCTAssertEqual(diagnostics.phase, .recording)
+        XCTAssertTrue(diagnostics.events.map(\.kind).contains("capture started"))
+        XCTAssertNotNil(diagnostics.preparation)
+
+        try await Task.sleep(for: .milliseconds(1200))
+        model.saveAndStop()
+        XCTAssertEqual(diagnostics.phase, .finishing)
+        XCTAssertTrue(model.isSamplingDiagnostics)
+        try await Task.sleep(for: .milliseconds(1500))
+        XCTAssertTrue(model.isSamplingDiagnostics)
+        XCTAssertGreaterThanOrEqual(diagnostics.samples.filter { $0.phase == .finishing }.count, 2)
+
+        try await waitUntil { !model.isSamplingDiagnostics }
+        XCTAssertFalse(model.isSamplingDiagnostics)
+        XCTAssertEqual(diagnostics.events.last?.kind, "finalized")
+        XCTAssertEqual(diagnostics.stops, [.finalizationTimedOut])
+        let count = diagnostics.samples.count
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertEqual(diagnostics.samples.count, count)
+        try await waitUntil { model.state == .idle }
     }
 
     private func waitWhilePreparing(_ model: RecorderModel) async throws {

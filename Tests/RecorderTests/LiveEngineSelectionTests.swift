@@ -21,18 +21,23 @@ class FakeLiveEngine: LiveSpeechEngine {
     let prepareDelay: Duration?
     let startSessionError: Error?
     let unloadDelay: Duration?
+    let endSessionDelay: Duration?
+    let endSessionStopReason: LiveStopReason?
     private(set) var prepareCalls = 0
     private(set) var startSessionCalls = 0
     private(set) var unloadCalls = 0
     private(set) var capturedErrors: [Error] = []
 
     init(kind: LiveEngineKind, prepareError: Error? = nil, prepareDelay: Duration? = nil,
-         startSessionError: Error? = nil, unloadDelay: Duration? = nil) {
+         startSessionError: Error? = nil, unloadDelay: Duration? = nil,
+         endSessionDelay: Duration? = nil, endSessionStopReason: LiveStopReason? = nil) {
         self.kind = kind
         self.prepareError = prepareError
         self.prepareDelay = prepareDelay
         self.startSessionError = startSessionError
         self.unloadDelay = unloadDelay
+        self.endSessionDelay = endSessionDelay
+        self.endSessionStopReason = endSessionStopReason
     }
 
     func prepare(language: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> PreparationInfo {
@@ -51,6 +56,8 @@ class FakeLiveEngine: LiveSpeechEngine {
     }
 
     func endSession() async -> LiveSessionResult {
+        if let endSessionDelay { try? await Task.sleep(for: endSessionDelay) }
+        if let endSessionStopReason, stopReason == nil { stopReason = endSessionStopReason }
         isSessionActive = false
         return LiveSessionResult(lines: confirmedLines, complete: failureMessage == nil, stopReason: stopReason)
     }

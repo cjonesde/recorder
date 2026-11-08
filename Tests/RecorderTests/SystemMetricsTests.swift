@@ -8,7 +8,11 @@ final class SystemMetricsTests: XCTestCase {
 
     func testLiveMetricsReadsNonZeroFootprintAndAValidPressure() {
         let r = LiveSystemMetrics().read(includeSpeechService: false)
-        XCTAssertGreaterThan(r.footprintBytes, 1_000_000)
+        XCTAssertGreaterThan(r.footprintBytes ?? 0, 1_000_000)
+        XCTAssertNotNil(r.pressure)
+        XCTAssertNotNil(r.swapUsedBytes)
+        XCTAssertNotNil(r.swapIns)
+        XCTAssertNotNil(r.swapOuts)
         XCTAssertNil(r.speechServiceFootprintBytes)
     }
 

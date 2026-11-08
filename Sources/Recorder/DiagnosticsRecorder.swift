@@ -16,9 +16,9 @@ struct DiagnosticSample: Codable, Equatable, Sendable {
     let t: Double
     let phase: RecordingPhase
     let reading: MetricsReading
-    let swapGrowthBytes: Int64
-    let swapInsSinceStart: UInt64
-    let swapOutsSinceStart: UInt64
+    let swapGrowthBytes: Int64?
+    let swapInsSinceStart: UInt64?
+    let swapOutsSinceStart: UInt64?
     let textBehindRough: Double?
     let textBehindFinal: Double?
     let heldAudioSeconds: Double?
@@ -34,6 +34,7 @@ final class DiagnosticsRecorder {
 
     let engine: LiveEngineKind
     let settings: [String: String]
+    let measuresSpeechService: Bool
     private(set) var phase: RecordingPhase = .preparing
     private(set) var samples: [DiagnosticSample] = []
     private(set) var events: [DebugEvent] = []
@@ -48,13 +49,14 @@ final class DiagnosticsRecorder {
     @ObservationIgnored private let baseline: MetricsReading
     @ObservationIgnored private var captureStartedAt: TimeInterval?
 
-    init(source: SystemMetricsSource, now: @escaping () -> TimeInterval, engine: LiveEngineKind, settings: [String: String]) {
+    init(source: SystemMetricsSource, now: @escaping () -> TimeInterval, engine: LiveEngineKind, settings: [String: String], measuresSpeechService: Bool? = nil) {
         self.source = source
         self.now = now
         self.engine = engine
         self.settings = settings
+        self.measuresSpeechService = measuresSpeechService ?? (engine == .apple)
         startedAt = now()
-        baseline = source.read(includeSpeechService: engine == .apple)
+        baseline = source.read(includeSpeechService: self.measuresSpeechService)
     }
 
     private var elapsed: Double { now() - startedAt }
@@ -99,14 +101,14 @@ final class DiagnosticsRecorder {
     }
 
     func sample(engine diagnostics: EngineDiagnostics, stall: Double, folder: URL?) {
-        let reading = source.read(includeSpeechService: engine == .apple)
+        let reading = source.read(includeSpeechService: measuresSpeechService)
         samples.append(DiagnosticSample(
             t: elapsed,
             phase: phase,
             reading: reading,
-            swapGrowthBytes: Int64(clamping: reading.swapUsedBytes) - Int64(clamping: baseline.swapUsedBytes),
-            swapInsSinceStart: reading.swapIns > baseline.swapIns ? reading.swapIns - baseline.swapIns : 0,
-            swapOutsSinceStart: reading.swapOuts > baseline.swapOuts ? reading.swapOuts - baseline.swapOuts : 0,
+            swapGrowthBytes: Self.difference(reading.swapUsedBytes, baseline.swapUsedBytes),
+            swapInsSinceStart: Self.increase(reading.swapIns, baseline.swapIns),
+            swapOutsSinceStart: Self.increase(reading.swapOuts, baseline.swapOuts),
             textBehindRough: diagnostics.latestProvisionalEnd.map { diagnostics.submittedThroughSeconds - $0 },
             textBehindFinal: diagnostics.latestFinalEnd.map { diagnostics.submittedThroughSeconds - $0 },
             heldAudioSeconds: diagnostics.heldAudioSeconds,
@@ -114,6 +116,16 @@ final class DiagnosticsRecorder {
             longestMainThreadStall: stall,
             audioFilesOnDisk: folder.map(Self.audioFiles(in:)) ?? []
         ))
+    }
+
+    private static func difference(_ now: UInt64?, _ start: UInt64?) -> Int64? {
+        guard let now, let start else { return nil }
+        return Int64(clamping: now) - Int64(clamping: start)
+    }
+
+    private static func increase(_ now: UInt64?, _ start: UInt64?) -> UInt64? {
+        guard let now, let start else { return nil }
+        return now > start ? now - start : 0
     }
 
     static func audioFiles(in folder: URL) -> [String] {

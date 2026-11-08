@@ -14,12 +14,12 @@ enum MemoryPressure: String, Codable, Sendable {
 }
 
 struct MetricsReading: Codable, Equatable, Sendable {
-    var footprintBytes: UInt64
+    var footprintBytes: UInt64?
     var speechServiceFootprintBytes: UInt64?
-    var pressure: MemoryPressure
-    var swapUsedBytes: UInt64
-    var swapIns: UInt64
-    var swapOuts: UInt64
+    var pressure: MemoryPressure?
+    var swapUsedBytes: UInt64?
+    var swapIns: UInt64?
+    var swapOuts: UInt64?
 }
 
 protocol SystemMetricsSource: Sendable {
@@ -38,12 +38,12 @@ struct LiveSystemMetrics: SystemMetricsSource {
     func read(includeSpeechService: Bool) -> MetricsReading {
         let swapCounts = Self.swapCounts()
         return MetricsReading(
-            footprintBytes: Self.ownFootprint() ?? 0,
+            footprintBytes: Self.ownFootprint(),
             speechServiceFootprintBytes: includeSpeechService ? Self.footprint(ofProcessNamed: speechServiceName) : nil,
-            pressure: MemoryPressure(kernelLevel: Self.pressureLevel()),
+            pressure: Self.pressureLevel().map(MemoryPressure.init(kernelLevel:)),
             swapUsedBytes: Self.swapUsed(),
-            swapIns: swapCounts.ins,
-            swapOuts: swapCounts.outs
+            swapIns: swapCounts?.ins,
+            swapOuts: swapCounts?.outs
         )
     }
 
@@ -58,21 +58,21 @@ struct LiveSystemMetrics: SystemMetricsSource {
         return result == KERN_SUCCESS ? UInt64(info.phys_footprint) : nil
     }
 
-    private static func pressureLevel() -> Int32 {
+    private static func pressureLevel() -> Int32? {
         var level: Int32 = 0
         var size = MemoryLayout<Int32>.size
-        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else { return 0 }
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else { return nil }
         return level
     }
 
-    private static func swapUsed() -> UInt64 {
+    private static func swapUsed() -> UInt64? {
         var usage = xsw_usage()
         var size = MemoryLayout<xsw_usage>.size
-        guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0 else { return 0 }
+        guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0 else { return nil }
         return usage.xsu_used
     }
 
-    private static func swapCounts() -> (ins: UInt64, outs: UInt64) {
+    private static func swapCounts() -> (ins: UInt64, outs: UInt64)? {
         var stats = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &stats) {
@@ -80,7 +80,7 @@ struct LiveSystemMetrics: SystemMetricsSource {
                 host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
             }
         }
-        guard result == KERN_SUCCESS else { return (0, 0) }
+        guard result == KERN_SUCCESS else { return nil }
         return (UInt64(stats.swapins), UInt64(stats.swapouts))
     }
 
