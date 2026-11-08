@@ -28,16 +28,19 @@ final class RecorderModel {
 
     @ObservationIgnored private let whisperLoader: (@MainActor (String) async -> Void)?
     @ObservationIgnored private let fileTranscriber: (@MainActor (URL) async throws -> OfflineTranscription)?
+    @ObservationIgnored private let whisperUnloader: (@MainActor () -> Void)?
     @ObservationIgnored private var recordingUsesLive = false
 
     init(
         engineFactory: @escaping LocalTranscriptionEngine.EngineFactory = LocalTranscriptionEngine.defaultFactory,
         whisperLoader: (@MainActor (String) async -> Void)? = nil,
-        fileTranscriber: (@MainActor (URL) async throws -> OfflineTranscription)? = nil
+        fileTranscriber: (@MainActor (URL) async throws -> OfflineTranscription)? = nil,
+        whisperUnloader: (@MainActor () -> Void)? = nil
     ) {
         live = LocalTranscriptionEngine(factory: engineFactory)
         self.whisperLoader = whisperLoader
         self.fileTranscriber = fileTranscriber
+        self.whisperUnloader = whisperUnloader
     }
 
     // MARK: - Persisted preferences (mirrored to UserDefaults via Preferences)
@@ -286,6 +289,7 @@ final class RecorderModel {
         let wantsLive = liveTranscriptionEnabled
         let kind = liveEngine
         recordingUsesLive = wantsLive
+        if wantsLive { unloadOfflineModels() }
         state = .preparing
         statusMessage = wantsLive ? Self.preparingMessage(kind, progress: nil) : "Starting capture…"
         let diagnostics = beginDiagnostics(engine: kind, liveTranscription: wantsLive, settings: [
@@ -857,6 +861,7 @@ final class RecorderModel {
 
         Task { [weak self] in
             guard let self else { return }
+            defer { self.unloadOfflineModels() }
             guard let audioURL = pending.audioURL else {
                 self.transcriptionState = .failed("This recording kept no audio, so it cannot be transcribed again.")
                 return
@@ -938,13 +943,21 @@ final class RecorderModel {
         }
     }
 
-    /// Frees the resident live engine before Whisper loads, unless a live session is using it.
     func unloadLiveEngineForPolish(_ pending: PendingTranscription) async {
         guard !live.isSessionActive else { return }
+        let wasLoaded = live.engine.isLoaded
         await live.engine.unload()
-        guard let recorder = pending.diagnostics else { return }
+        guard wasLoaded, showDebugInfo, let recorder = pending.diagnostics else { return }
         recorder.record("live engine unloaded for polish", detail: nil)
         persistDebugReport(recorder, folder: pending.folderURL, language: pending.reportLanguage)
+    }
+
+    private func unloadOfflineModels() {
+        if let whisperUnloader {
+            whisperUnloader()
+        } else {
+            live.unloadOfflineModels()
+        }
     }
 
     func startPolishForTesting(

@@ -136,6 +136,17 @@ final class DiagnosticsRecorderTests: XCTestCase {
         XCTAssertEqual(parakeet.includeSpeechServiceRequests, [false, false])
     }
 
+    func testErasureRowFollowsTheLatestEngineDiagnostics() {
+        let rec = DiagnosticsRecorder(source: FakeMetrics([reading()]), now: { 0 }, engine: .parakeet, settings: [:])
+        XCTAssertNil(rec.erasureRow)
+        let fluid = EngineDiagnostics(submittedThroughSeconds: 0, latestProvisionalEnd: nil, latestFinalEnd: nil,
+                                      heldAudioSeconds: 1, heldAudioQuality: .estimated, rows: [DiagnosticRow.erasureNotGuaranteed])
+        rec.sample(engine: fluid, stall: 0, folder: nil)
+        XCTAssertEqual(rec.erasureRow, DiagnosticRow(label: "Erasure", value: "not guaranteed", quality: .unknown))
+        rec.sample(engine: diag(), stall: 0, folder: nil)
+        XCTAssertNil(rec.erasureRow)
+    }
+
     func testAudioFilesIgnoreTranscriptAndDebugFiles() throws {
         let folder = try tempFolder(files: ["transcript.md", "transcript.json", "debug.json", "mic.caf"])
         let rec = DiagnosticsRecorder(source: FakeMetrics([reading()]), now: { 0 }, engine: .apple, settings: [:])

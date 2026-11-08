@@ -182,6 +182,9 @@ private struct DebugDrawerRows: View {
                 value: DebugFormat.held(sample?.heldAudioSeconds, quality: heldQuality),
                 level: .heldAudio(sample?.heldAudioSeconds, quality: heldQuality)
             )
+            if let erasure = recorder.erasureRow {
+                DebugRow(label: erasure.label, value: erasure.value)
+            }
             DebugRow(
                 label: "Audio files on disk",
                 value: DebugFormat.audioFiles(sample?.audioFilesOnDisk ?? [])

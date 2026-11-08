@@ -15,8 +15,62 @@ enum StreamingSpeechError: LocalizedError {
     }
 }
 
+final class BufferLifetimeLog: @unchecked Sendable {
+    struct Summary: Equatable, Sendable {
+        let median: Double
+        let longest: Double
+        let released: Int
+    }
+
+    static let recentCapacity = 1_000
+
+    private let lock = NSLock()
+    private var epoch = 0
+    private var recent: [Double] = []
+    private var nextSlot = 0
+    private var longest: Double = 0
+    private var released = 0
+
+    func begin() -> Int {
+        lock.withLock {
+            epoch += 1
+            recent = []
+            nextSlot = 0
+            longest = 0
+            released = 0
+            return epoch
+        }
+    }
+
+    var currentEpoch: Int { lock.withLock { epoch } }
+
+    func record(_ seconds: Double, epoch: Int) {
+        lock.withLock {
+            guard epoch == self.epoch, seconds.isFinite, seconds >= 0 else { return }
+            if recent.count < Self.recentCapacity {
+                recent.append(seconds)
+            } else {
+                recent[nextSlot] = seconds
+            }
+            nextSlot = (nextSlot + 1) % Self.recentCapacity
+            longest = max(longest, seconds)
+            released += 1
+        }
+    }
+
+    var summary: Summary? {
+        lock.withLock {
+            guard !recent.isEmpty else { return nil }
+            let sorted = recent.sorted()
+            let middle = sorted.count / 2
+            let median = sorted.count % 2 == 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+            return Summary(median: median, longest: longest, released: released)
+        }
+    }
+}
+
 enum ErasingPCMBuffer {
-    static func make(format: AVAudioFormat, count: Int) throws -> AVAudioPCMBuffer {
+    static func make(format: AVAudioFormat, count: Int, lifetimes: BufferLifetimeLog? = nil) throws -> AVAudioPCMBuffer {
         guard format.channelCount == 1,
               [.pcmFormatFloat32, .pcmFormatInt16].contains(format.commonFormat), count > 0 else {
             throw StreamingSpeechError.unsupportedFormat
@@ -27,11 +81,14 @@ enum ErasingPCMBuffer {
         var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
             mNumberChannels: 1, mDataByteSize: UInt32(bytes), mData: storage
         ))
+        let created = ProcessInfo.processInfo.systemUptime
+        let epoch = lifetimes?.currentEpoch ?? 0
         let buffer = withUnsafePointer(to: &list) {
             AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: $0) { released in
                 let data = released.pointee.mBuffers.mData!
                 _ = memset_s(data, bytes, 0, bytes)
                 data.deallocate()
+                lifetimes?.record(ProcessInfo.processInfo.systemUptime - created, epoch: epoch)
             }
         }
         guard let buffer else {
@@ -105,6 +162,7 @@ final class StreamingAudioInput: @unchecked Sendable {
     private var accepting = false
     private var overrunReason: LiveStopReason?
     private var position: Int64 = 0
+    let bufferLifetimes = BufferLifetimeLog()
 
     private static func agedReason(_ channelIndex: Int) -> LiveStopReason {
         channelIndex == Source.desktop.rawValue ? .desktopAudioAged : .micAudioAged
@@ -127,6 +185,7 @@ final class StreamingAudioInput: @unchecked Sendable {
             overrunReason = nil
             position = 0
         }
+        _ = bufferLifetimes.begin()
     }
 
     func end() { lock.withLock { accepting = false } }
@@ -192,7 +251,7 @@ final class StreamingAudioInput: @unchecked Sendable {
             }
             let n = min(Int(rate / 10), available)
             guard n > 0 else { return nil }
-            let buffer = try ErasingPCMBuffer.make(format: format, count: n)
+            let buffer = try ErasingPCMBuffer.make(format: format, count: n, lifetimes: bufferLifetimes)
             var desktopEnergy: Float = 0, micEnergy: Float = 0
             for i in 0..<n {
                 let d: Float = i < desktop.count ? desktop.samples[i] : 0

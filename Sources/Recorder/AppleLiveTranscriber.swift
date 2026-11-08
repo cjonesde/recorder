@@ -43,6 +43,47 @@ struct StreamingTranscript {
     }
 }
 
+final class QueuedAudioMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames = 0
+    private var rate: Double = 0
+
+    var seconds: Double { lock.withLock { rate > 0 ? Double(max(0, frames)) / rate : 0 } }
+
+    func reset(rate: Double) {
+        lock.withLock {
+            frames = 0
+            self.rate = rate
+        }
+    }
+
+    func add(_ count: Int) { lock.withLock { frames += count } }
+
+    func remove(_ count: Int) { lock.withLock { frames -= count } }
+}
+
+struct MeteredAnalyzerInputs: AsyncSequence, Sendable {
+    typealias Element = AnalyzerInput
+
+    let base: AsyncStream<AnalyzerInput>
+    let meter: QueuedAudioMeter
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        var base: AsyncStream<AnalyzerInput>.Iterator
+        let meter: QueuedAudioMeter
+
+        mutating func next() async -> AnalyzerInput? {
+            let input = await base.next()
+            if let input { meter.remove(Int(input.buffer.frameLength)) }
+            return input
+        }
+    }
+
+    func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(base: base.makeAsyncIterator(), meter: meter)
+    }
+}
+
 @MainActor
 @Observable
 final class AppleLiveTranscriber: LiveSpeechEngine {
@@ -74,6 +115,7 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
     @ObservationIgnored private var pump: StreamingInputPump?
     @ObservationIgnored private var generation = 0
     private let energyLog = StreamingEnergyLog()
+    private let queued = QueuedAudioMeter()
 
     func prepare(language: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> PreparationInfo {
         let clock = ContinuousClock()
@@ -123,6 +165,9 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
         let generation = self.generation
         let (inputs, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingOldest(4))
         self.continuation = continuation
+        let queued = queued
+        queued.reset(rate: format.sampleRate)
+        let metered = MeteredAnalyzerInputs(base: inputs, meter: queued)
         energyLog.resetSubmitted()
         inbox.begin(format: format)
         isSessionActive = true
@@ -142,7 +187,7 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
             }
         }
         analysisTask = Task.detached { [weak self] in
-            do { _ = try await analyzer.analyzeSequence(inputs) }
+            do { _ = try await analyzer.analyzeSequence(metered) }
             catch { await self?.fail(error, generation: generation) }
         }
         let energyLog = energyLog
@@ -150,7 +195,10 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
             inbox: inbox,
             deliver: { chunk in
                 energyLog.record(chunk)
+                let frames = Int(chunk.buffer.frameLength)
+                queued.add(frames)
                 guard case .enqueued = continuation.yield(AnalyzerInput(buffer: chunk.buffer, bufferStartTime: chunk.startTime)) else {
+                    queued.remove(frames)
                     throw LiveStopError(reason: .engineQueueFull, detail: nil)
                 }
             },
@@ -193,6 +241,7 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
         analysisTask = nil
         resultTask = nil
         energyLog.clear()
+        queued.reset(rate: 0)
         isSessionActive = false
         return LiveSessionResult(lines: confirmedLines, complete: failureMessage == nil, stopReason: stopReason)
     }
@@ -215,6 +264,7 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
         analysisTask = nil
         resultTask = nil
         energyLog.clear()
+        queued.reset(rate: 0)
         isSessionActive = false
         failureMessage = nil
         stopReason = nil
@@ -223,14 +273,30 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
     }
 
     func diagnostics() -> EngineDiagnostics {
-        EngineDiagnostics(
+        let inboxSeconds = inbox.pendingSeconds
+        let queuedSeconds = queued.seconds
+        return EngineDiagnostics(
             submittedThroughSeconds: energyLog.submittedThrough,
             latestProvisionalEnd: text.latestProvisionalEnd,
             latestFinalEnd: text.finalEnd > 0 ? text.finalEnd : nil,
-            heldAudioSeconds: inbox.pendingSeconds,
+            heldAudioSeconds: inboxSeconds + queuedSeconds,
             heldAudioQuality: .measured,
-            rows: [DiagnosticRow(label: "Inside Apple", value: "unknown", quality: .unknown)]
+            rows: [
+                DiagnosticRow(label: "App inbox", value: String(format: "%.2f s", inboxSeconds), quality: .measured),
+                DiagnosticRow(label: "Queued for Apple", value: String(format: "%.2f s", queuedSeconds), quality: .measured),
+                Self.bufferReleaseRow(inbox.bufferLifetimes.summary),
+                DiagnosticRow(label: "Inside Apple", value: "unknown", quality: .unknown)
+            ]
         )
+    }
+
+    nonisolated static func bufferReleaseRow(_ summary: BufferLifetimeLog.Summary?) -> DiagnosticRow {
+        guard let summary else {
+            return DiagnosticRow(label: "Buffer release", value: "none yet", quality: .unknown)
+        }
+        return DiagnosticRow(label: "Buffer release",
+                             value: String(format: "median %.2f s, max %.2f s", summary.median, summary.longest),
+                             quality: .measured)
     }
 
     func unload() async {

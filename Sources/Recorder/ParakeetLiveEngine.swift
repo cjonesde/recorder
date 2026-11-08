@@ -216,9 +216,45 @@ final class ParakeetFeedGate: @unchecked Sendable {
     }
 }
 
+protocol ParakeetStreamingSession: AnyObject, Sendable {
+    func start() async throws -> AsyncStream<SlidingWindowTranscriptionUpdate>
+    func stream(_ buffer: sending AVAudioPCMBuffer) async
+    func finish() async throws
+    func cancel() async
+    func release() async
+}
+
+final class FluidParakeetSession: ParakeetStreamingSession {
+    private let manager = SlidingWindowAsrManager(config: .streaming)
+    private let models: AsrModels
+
+    init(models: AsrModels) { self.models = models }
+
+    func start() async throws -> AsyncStream<SlidingWindowTranscriptionUpdate> {
+        try await manager.loadModels(models)
+        let updates = await manager.transcriptionUpdates
+        try await manager.startStreaming(source: .microphone)
+        return updates
+    }
+
+    func stream(_ buffer: sending AVAudioPCMBuffer) async { await manager.streamAudio(buffer) }
+
+    func finish() async throws { _ = try await manager.finish() }
+
+    func cancel() async { await manager.cancel() }
+
+    func release() async {
+        try? await manager.reset()
+        await manager.cleanup()
+    }
+}
+
 @MainActor
 @Observable
 final class ParakeetLiveEngine: LiveSpeechEngine {
+    typealias SessionFactory = @Sendable () -> any ParakeetStreamingSession
+    typealias Loader = @Sendable (URL, @escaping @Sendable (Double?) -> Void) async throws -> SessionFactory
+
     nonisolated static let sampleRate = 16_000.0
     nonisolated static let handoffSeconds = 10.0
     nonisolated static let overdueWindowSeconds = 9.0
@@ -227,6 +263,18 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
 
     nonisolated static var modelDirectory: URL {
         FluidEngineSupport.modelsDirectory.appendingPathComponent("parakeet-ultra", isDirectory: true)
+    }
+
+    nonisolated static let defaultLoader: Loader = { folder, progress in
+        try FileManager.default.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let models = try await AsrModels.downloadAndLoad(
+            to: folder, version: .ultra, progressHandler: { progress($0.fractionCompleted) }
+        )
+        return { FluidParakeetSession(models: models) }
+    }
+
+    nonisolated static func overdueDetail(through: Double) -> String {
+        String(format: "Parakeet's window ending at %.0f s took longer than %.0f s or never finished", through, overdueWindowSeconds)
     }
 
     nonisolated static var windowLabel: String {
@@ -242,8 +290,8 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
 
     let kind = LiveEngineKind.parakeet
     let displayName = "Parakeet Ultra"
-    let finalizationTimeout: Duration = .seconds(30)
-    var isLoaded: Bool { models != nil }
+    let finalizationTimeout: Duration
+    var isLoaded: Bool { makeSession != nil }
 
     private(set) var isSessionActive = false
     private(set) var revision = 0
@@ -257,8 +305,9 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
     var hypothesis: String { text.hypothesis }
 
     nonisolated let inbox = StreamingAudioInput()
-    @ObservationIgnored private var models: AsrModels?
-    @ObservationIgnored private var manager: SlidingWindowAsrManager?
+    @ObservationIgnored private let loader: Loader
+    @ObservationIgnored private var makeSession: SessionFactory?
+    @ObservationIgnored private var manager: (any ParakeetStreamingSession)?
     @ObservationIgnored private var merger = WindowTranscriptMerger()
     @ObservationIgnored private var handoff: BoundedEngineHandoff?
     @ObservationIgnored private var gate: ParakeetFeedGate?
@@ -271,6 +320,11 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
     @ObservationIgnored private var generation = 0
     private let energyLog = StreamingEnergyLog()
 
+    init(finalizationTimeout: Duration = .seconds(30), loader: @escaping Loader = ParakeetLiveEngine.defaultLoader) {
+        self.finalizationTimeout = finalizationTimeout
+        self.loader = loader
+    }
+
     func prepare(language: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> PreparationInfo {
         let clock = ContinuousClock()
         let began = clock.now
@@ -279,21 +333,18 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
         let generation = self.generation
         let folder = Self.modelDirectory
         let firstLoad = !FileManager.default.fileExists(atPath: folder.path)
-        if models == nil {
-            try FileManager.default.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let loaded = try await AsrModels.downloadAndLoad(
-                to: folder, version: .ultra, progressHandler: { progress($0.fractionCompleted) }
-            )
+        if makeSession == nil {
+            let loaded = try await loader(folder, progress)
             try Task.checkCancellation()
             guard generation == self.generation else { throw CancellationError() }
-            models = loaded
+            makeSession = loaded
         }
         return PreparationInfo(loadSeconds: FluidEngineSupport.seconds(clock.now - began), firstLoad: firstLoad,
                                modelBytesOnDisk: FluidEngineSupport.bytesOnDisk(folder), computeUnits: Self.computeUnitsLabel)
     }
 
     func startSession() throws {
-        guard !isSessionActive, let models,
+        guard !isSessionActive, let makeSession,
               let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Self.sampleRate,
                                          channels: 1, interleaved: false) else {
             throw LiveStopError(reason: .engineError, detail: "Parakeet was not prepared")
@@ -301,7 +352,7 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
         let generation = self.generation
         let handoff = BoundedEngineHandoff(capacitySeconds: Self.handoffSeconds, sampleRate: Self.sampleRate)
         let gate = ParakeetFeedGate()
-        let manager = SlidingWindowAsrManager(config: .streaming)
+        let manager = makeSession()
         self.handoff = handoff
         self.gate = gate
         self.manager = manager
@@ -315,10 +366,7 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
         let previousWork = managerWork
         let setup = Task.detached { () async throws -> AsyncStream<SlidingWindowTranscriptionUpdate> in
             await previousWork?.value
-            try await manager.loadModels(models)
-            let updates = await manager.transcriptionUpdates
-            try await manager.startStreaming(source: .microphone)
-            return updates
+            return try await manager.start()
         }
         reader = Task.detached { [weak self] in
             guard let updates = try? await setup.value else { return }
@@ -339,8 +387,8 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
                 case .room: break
                 case .closed: break feeding
                 case .overdue(let through):
-                    let detail = String(format: "Parakeet returned no result for the window ending at %.0f s", through)
-                    await self?.fail(LiveStopError(reason: .engineError, detail: detail), generation: generation)
+                    await self?.fail(LiveStopError(reason: .engineError, detail: Self.overdueDetail(through: through)),
+                                     generation: generation)
                     return
                 }
                 guard var samples = await handoff.next() else { break }
@@ -352,7 +400,7 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
                                      generation: generation)
                     return
                 }
-                await manager.streamAudio(buffer)
+                await manager.stream(buffer)
                 gate.add(count, at: Date())
             }
             gate.inputEnded(at: Date())
@@ -391,7 +439,7 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
             var outcome = Finalization(finished: false, error: nil)
             if await self?.failureMessage == nil {
                 do {
-                    _ = try await manager.finish()
+                    try await manager.finish()
                     outcome = Finalization(finished: true, error: nil)
                 } catch {
                     outcome = Finalization(finished: false,
@@ -404,9 +452,10 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
         }
         let teardown = enqueueManagerWork {
             _ = await work.value
-            await Self.release(manager)
+            await manager.release()
         }
         let outcome = await FluidEngineSupport.value(of: work, within: finalizationTimeout)
+        if outcome == nil { abandonHungManager() }
         guard generation == self.generation else { return LiveSessionResult(lines: [], complete: false, stopReason: nil) }
         if let outcome {
             if let error = outcome.error { fail(error, generation: generation) }
@@ -451,7 +500,7 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
                 await consumer?.value
                 await manager.cancel()
                 await reader?.value
-                await Self.release(manager)
+                await manager.release()
             }
         }
         manager = nil
@@ -495,16 +544,22 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
                 DiagnosticRow(label: "Fed to engine", value: String(format: "%.1f s", fed), quality: .measured),
                 DiagnosticRow(label: "Queued in FluidAudio", value: String(format: "%.1f s", queued), quality: .estimated),
                 DiagnosticRow(label: "Window", value: Self.windowLabel, quality: .measured),
-                decodeRow
+                decodeRow,
+                DiagnosticRow.erasureNotGuaranteed
             ]
         )
     }
 
     func unload() async {
         cancelSession()
-        guard models != nil else { return }
-        models = nil
+        guard makeSession != nil else { return }
+        makeSession = nil
         await enqueueManagerWork {}.value
+    }
+
+    private func abandonHungManager() {
+        makeSession = nil
+        managerWork = nil
     }
 
     private func absorb(_ update: SlidingWindowTranscriptionUpdate, generation: Int) {
@@ -550,11 +605,6 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
         }
         managerWork = task
         return task
-    }
-
-    nonisolated private static func release(_ manager: SlidingWindowAsrManager) async {
-        try? await manager.reset()
-        await manager.cleanup()
     }
 
     nonisolated private static func buffer(copying samples: [Float]) -> AVAudioPCMBuffer? {

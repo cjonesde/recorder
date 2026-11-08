@@ -40,6 +40,7 @@ final class DiagnosticsRecorder {
     private(set) var events: [DebugEvent] = []
     private(set) var preparation: PreparationInfo?
     private(set) var stops: [LiveStopReason] = []
+    private(set) var engineRows: [DiagnosticRow] = []
     private(set) var hasSeenFirstText = false
     private(set) var hasSeenFirstFinalText = false
 
@@ -102,6 +103,7 @@ final class DiagnosticsRecorder {
 
     func sample(engine diagnostics: EngineDiagnostics, stall: Double, folder: URL?) {
         let reading = source.read(includeSpeechService: measuresSpeechService)
+        engineRows = diagnostics.rows
         samples.append(DiagnosticSample(
             t: elapsed,
             phase: phase,
@@ -116,6 +118,10 @@ final class DiagnosticsRecorder {
             longestMainThreadStall: stall,
             audioFilesOnDisk: folder.map(Self.audioFiles(in:)) ?? []
         ))
+    }
+
+    var erasureRow: DiagnosticRow? {
+        engineRows.first { $0.label == DiagnosticRow.erasureLabel }
     }
 
     private static func difference(_ now: UInt64?, _ start: UInt64?) -> Int64? {

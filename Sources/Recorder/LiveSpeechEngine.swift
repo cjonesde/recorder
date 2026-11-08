@@ -15,6 +15,9 @@ struct DiagnosticRow: Codable, Equatable, Sendable {
     let label: String
     let value: String
     let quality: MetricQuality
+
+    static let erasureLabel = "Erasure"
+    static let erasureNotGuaranteed = DiagnosticRow(label: erasureLabel, value: "not guaranteed", quality: .unknown)
 }
 
 struct PreparationInfo: Codable, Equatable, Sendable {

@@ -33,9 +33,30 @@ private final class NemotronFeedMeter: @unchecked Sendable {
     }
 }
 
+protocol NemotronStreamingManager: AnyObject, Sendable {
+    func feed(_ samples: [Float]) async throws
+    func currentTimings() async -> [TokenTiming]
+    func recoveryCounts() async -> (rescues: Int, spans: Int)
+    func finishTimings() async throws -> [TokenTiming]
+    func reset() async
+    func cleanup() async
+}
+
+extension StreamingNemotronMultilingualAsrManager: NemotronStreamingManager {
+    func feed(_ samples: [Float]) async throws { _ = try await process(samples: samples) }
+
+    func currentTimings() async -> [TokenTiming] { getTokenTimings() }
+
+    func recoveryCounts() async -> (rescues: Int, spans: Int) { (blankRescueCount, detectedBlankSpanCount) }
+
+    func finishTimings() async throws -> [TokenTiming] { try await finishWithTokenTimings().timings }
+}
+
 @MainActor
 @Observable
 final class NemotronLiveEngine: LiveSpeechEngine {
+    typealias Loader = @Sendable (String, URL, @escaping @Sendable (Double?) -> Void) async throws -> any NemotronStreamingManager
+
     nonisolated static let sampleRate = 16_000.0
     nonisolated static let chunkMs = 560
     nonisolated static let chunkSamples = 8_960
@@ -59,6 +80,26 @@ final class NemotronLiveEngine: LiveSpeechEngine {
             .appendingPathComponent("\(chunkMs)ms", isDirectory: true)
     }
 
+    nonisolated static let defaultLoader: Loader = { language, root, progress in
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuAndNeuralEngine
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let shared = try await StreamingNemotronMultilingualAsrManager.downloadAndPreloadShared(
+            languageCode: language, chunkMs: chunkMs, to: root, configuration: configuration,
+            progressHandler: { progress($0.fractionCompleted) }
+        )
+        try Task.checkCancellation()
+        let loaded = StreamingNemotronMultilingualAsrManager(configuration: configuration)
+        do {
+            try await loaded.loadFromShared(shared)
+            await loaded.setLanguage("auto")
+        } catch {
+            await loaded.cleanup()
+            throw error
+        }
+        return loaded
+    }
+
     nonisolated static var recoveryEnabled: Bool {
         guard let raw = getenv(recoverySwitch) else { return true }
         return ["0", "false", "no"].contains(String(cString: raw).lowercased())
@@ -71,7 +112,7 @@ final class NemotronLiveEngine: LiveSpeechEngine {
 
     let kind = LiveEngineKind.nemotron
     let displayName = "Nemotron 3.5 streaming"
-    let finalizationTimeout: Duration = .seconds(30)
+    let finalizationTimeout: Duration
     var isLoaded: Bool { manager != nil }
 
     private(set) var isSessionActive = false
@@ -86,7 +127,8 @@ final class NemotronLiveEngine: LiveSpeechEngine {
     var hypothesis: String { text.hypothesis }
 
     nonisolated let inbox = StreamingAudioInput()
-    @ObservationIgnored private var manager: StreamingNemotronMultilingualAsrManager?
+    @ObservationIgnored private let loader: Loader
+    @ObservationIgnored private var manager: (any NemotronStreamingManager)?
     @ObservationIgnored private var loadedVariant: URL?
     @ObservationIgnored private var segmenter = TokenLineSegmenter()
     @ObservationIgnored private var handoff: BoundedEngineHandoff?
@@ -97,6 +139,11 @@ final class NemotronLiveEngine: LiveSpeechEngine {
     @ObservationIgnored private var generation = 0
     private let energyLog = StreamingEnergyLog()
     private let meter = NemotronFeedMeter()
+
+    init(finalizationTimeout: Duration = .seconds(30), loader: @escaping Loader = NemotronLiveEngine.defaultLoader) {
+        self.finalizationTimeout = finalizationTimeout
+        self.loader = loader
+    }
 
     func prepare(language: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> PreparationInfo {
         let clock = ContinuousClock()
@@ -109,18 +156,8 @@ final class NemotronLiveEngine: LiveSpeechEngine {
         let variant = Self.variantDirectory(language: language, root: root)
         let firstLoad = !FileManager.default.fileExists(atPath: variant.path)
         if manager == nil || loadedVariant != variant {
-            let configuration = MLModelConfiguration()
-            configuration.computeUnits = .cpuAndNeuralEngine
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let shared = try await StreamingNemotronMultilingualAsrManager.downloadAndPreloadShared(
-                languageCode: language, chunkMs: Self.chunkMs, to: root, configuration: configuration,
-                progressHandler: { progress($0.fractionCompleted) }
-            )
-            try Task.checkCancellation()
-            let loaded = StreamingNemotronMultilingualAsrManager(configuration: configuration)
+            let loaded = try await loader(language, root, progress)
             do {
-                try await loaded.loadFromShared(shared)
-                await loaded.setLanguage("auto")
                 try Task.checkCancellation()
                 guard generation == self.generation else { throw CancellationError() }
             } catch {
@@ -164,7 +201,7 @@ final class NemotronLiveEngine: LiveSpeechEngine {
                     while offset < samples.count {
                         let upper = min(offset + Self.chunkSamples, samples.count)
                         var slice = Array(samples[offset..<upper])
-                        _ = try await manager.process(samples: slice)
+                        try await manager.feed(slice)
                         meter.add(slice.count)
                         AudioMemory.discard(&slice)
                         offset = upper
@@ -175,8 +212,9 @@ final class NemotronLiveEngine: LiveSpeechEngine {
                     await self?.fail(error, generation: generation)
                     return
                 }
-                let timings = await manager.getTokenTimings()
-                meter.setRecovery(rescues: await manager.blankRescueCount, spans: await manager.detectedBlankSpanCount)
+                let timings = await manager.currentTimings()
+                let counts = await manager.recoveryCounts()
+                meter.setRecovery(rescues: counts.rescues, spans: counts.spans)
                 let marker = (count: timings.count, end: timings.last?.endTime ?? -1)
                 guard marker != seen else { continue }
                 seen = marker
@@ -215,20 +253,21 @@ final class NemotronLiveEngine: LiveSpeechEngine {
             let failed = await self?.failureMessage != nil
             if !failed {
                 do {
-                    let result = try await manager.finishWithTokenTimings()
-                    return Finalization(timings: result.timings, finished: true, error: nil)
+                    let timings = try await manager.finishTimings()
+                    return Finalization(timings: timings, finished: true, error: nil)
                 } catch {
-                    return Finalization(timings: await manager.getTokenTimings(), finished: false,
+                    return Finalization(timings: await manager.currentTimings(), finished: false,
                                         error: LiveStopError(reason: .engineError, detail: error.localizedDescription))
                 }
             }
-            return Finalization(timings: await manager.getTokenTimings(), finished: false, error: nil)
+            return Finalization(timings: await manager.currentTimings(), finished: false, error: nil)
         }
         let teardown = enqueueManagerWork {
             _ = await work.value
             await manager.reset()
         }
         let outcome = await FluidEngineSupport.value(of: work, within: finalizationTimeout)
+        if outcome == nil { abandonHungManager(manager, after: teardown) }
         guard generation == self.generation else { return LiveSessionResult(lines: [], complete: false, stopReason: nil) }
         if let outcome {
             if let error = outcome.error { fail(error, generation: generation) }
@@ -302,7 +341,8 @@ final class NemotronLiveEngine: LiveSpeechEngine {
                 DiagnosticRow(label: "Recovery", value: recovery ? "on" : "off", quality: .measured),
                 DiagnosticRow(label: "Recovery replay", value: "not observable", quality: .unknown),
                 DiagnosticRow(label: "Recovered spans",
-                              value: "\(counts.rescues) of \(counts.spans)", quality: .measured)
+                              value: "\(counts.rescues) of \(counts.spans)", quality: .measured),
+                DiagnosticRow.erasureNotGuaranteed
             ]
         )
     }
@@ -313,6 +353,17 @@ final class NemotronLiveEngine: LiveSpeechEngine {
         self.manager = nil
         loadedVariant = nil
         await enqueueManagerWork { await manager.cleanup() }.value
+    }
+
+    private func abandonHungManager(_ hung: any NemotronStreamingManager, after teardown: Task<Void, Never>) {
+        guard manager === hung else { return }
+        manager = nil
+        loadedVariant = nil
+        managerWork = nil
+        Task.detached {
+            await teardown.value
+            await hung.cleanup()
+        }
     }
 
     private func absorb(_ timings: [TokenTiming], generation: Int) {

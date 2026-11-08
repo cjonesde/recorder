@@ -138,6 +138,13 @@ final class LocalTranscriptionEngine {
         await host.loadModel(name, downloadIfNeeded: downloadIfNeeded)
     }
 
+    var holdsOfflineModels: Bool { loadedModelName != nil || speakerKit != nil }
+
+    func unloadOfflineModels() {
+        host.unload()
+        speakerKit = nil
+    }
+
     // MARK: Live surface
 
     var confirmedLines: [TranscriptLine] { engine.confirmedLines }

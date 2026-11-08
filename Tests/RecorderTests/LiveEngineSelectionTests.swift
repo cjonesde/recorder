@@ -15,6 +15,7 @@ class FakeLiveEngine: LiveSpeechEngine {
     var stopReason: LiveStopReason?
     var labelSpeakers = true
     var onFailure: (() -> Void)?
+    var onPrepare: (() -> Void)?
     nonisolated let inbox = StreamingAudioInput()
 
     let prepareError: Error?
@@ -44,6 +45,7 @@ class FakeLiveEngine: LiveSpeechEngine {
 
     func prepare(language: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> PreparationInfo {
         prepareCalls += 1
+        onPrepare?()
         if let prepareDelay { try await Task.sleep(for: prepareDelay) }
         if let prepareError { throw prepareError }
         let firstLoad = !isLoaded
@@ -93,6 +95,7 @@ class FakeLiveEngine: LiveSpeechEngine {
 @MainActor
 final class FakeEngineLog {
     var made: [FakeLiveEngine] = []
+    var events: [String] = []
 }
 
 final class LiveEngineSelectionTests: XCTestCase {
@@ -231,6 +234,7 @@ final class LiveEngineSelectionTests: XCTestCase {
         let diagnostics = apple.diagnostics()
         XCTAssertEqual(diagnostics.heldAudioQuality, .measured)
         XCTAssertTrue(diagnostics.rows.contains(DiagnosticRow(label: "Inside Apple", value: "unknown", quality: .unknown)))
+        XCTAssertFalse(diagnostics.rows.contains { $0.label == "Erasure" })
     }
 
     @MainActor
@@ -246,6 +250,7 @@ final class LiveEngineSelectionTests: XCTestCase {
         XCTAssertEqual(diagnostics.heldAudioQuality, .estimated)
         XCTAssertEqual(diagnostics.heldAudioSeconds, 0)
         XCTAssertTrue(diagnostics.rows.contains(DiagnosticRow(label: "Recovery replay", value: "not observable", quality: .unknown)))
+        XCTAssertTrue(diagnostics.rows.contains(DiagnosticRow(label: "Erasure", value: "not guaranteed", quality: .unknown)))
         XCTAssertTrue(diagnostics.rows.contains { $0.label == "Handoff peak" && $0.quality == .measured })
         engine.captureFailed(LiveStopError(reason: .desktopRingOverflow, detail: nil))
         XCTAssertEqual(engine.stopReason, .desktopRingOverflow)
@@ -270,6 +275,7 @@ final class LiveEngineSelectionTests: XCTestCase {
         XCTAssertEqual(diagnostics.heldAudioQuality, .estimated)
         XCTAssertEqual(diagnostics.heldAudioSeconds, 0)
         XCTAssertTrue(diagnostics.rows.contains(DiagnosticRow(label: "Window", value: "11 s + 2 s + 2 s", quality: .measured)))
+        XCTAssertTrue(diagnostics.rows.contains(DiagnosticRow(label: "Erasure", value: "not guaranteed", quality: .unknown)))
         XCTAssertTrue(diagnostics.rows.contains { $0.label == "Last window decode" })
         XCTAssertTrue(diagnostics.rows.contains { $0.label == "Handoff peak" && $0.quality == .measured })
         engine.captureFailed(LiveStopError(reason: .desktopRingOverflow, detail: nil))
@@ -428,5 +434,63 @@ final class LiveEngineSelectionTests: XCTestCase {
         for _ in 0..<200 where !FileManager.default.fileExists(atPath: json.path) { try await Task.sleep(for: .milliseconds(25)) }
         XCTAssertTrue(FileManager.default.fileExists(atPath: json.path))
         return folder
+    }
+
+    @MainActor private func modelLoggingModelUse(_ log: FakeEngineLog, polishFails: Bool) -> RecorderModel {
+        RecorderModel(
+            engineFactory: { kind in
+                let engine = FakeLiveEngine(kind: kind, startSessionError: URLError(.cancelled))
+                engine.onPrepare = { log.events.append("prepare \(kind.rawValue)") }
+                return engine
+            },
+            whisperLoader: { _ in log.events.append("whisper load") },
+            fileTranscriber: { _ in
+                if polishFails { throw CancellationError() }
+                return OfflineTranscription(lines: [TranscriptLine(time: 0, text: "hello", speaker: nil)], clusters: [:], speakerNames: [:])
+            },
+            whisperUnloader: { log.events.append("whisper unload") }
+        )
+    }
+
+    @MainActor private func polishAndWait(_ model: RecorderModel) async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("polish-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: nil, diagnostics: nil, reportLanguage: nil)
+        for _ in 0..<200 where model.transcriptionState == .running { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertNotEqual(model.transcriptionState, .running)
+    }
+
+    @MainActor func testWhisperIsUnloadedWhenPolishEndsAndBeforeTheNextLivePrepare() async throws {
+        let log = FakeEngineLog()
+        let model = modelLoggingModelUse(log, polishFails: false)
+        try await polishAndWait(model)
+        guard case .done = model.transcriptionState else { return XCTFail("polish did not finish: \(model.transcriptionState)") }
+        XCTAssertEqual(log.events, ["whisper load", "whisper unload"])
+
+        model.liveEngine = .nemotron
+        model.startRecording(meeting: nil)
+        for _ in 0..<200 where model.state == .preparing { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.events, ["whisper load", "whisper unload", "whisper unload", "prepare nemotron"])
+    }
+
+    @MainActor func testWhisperIsUnloadedWhenPolishFails() async throws {
+        let log = FakeEngineLog()
+        let model = modelLoggingModelUse(log, polishFails: true)
+        try await polishAndWait(model)
+        guard case .failed = model.transcriptionState else { return XCTFail("polish did not fail: \(model.transcriptionState)") }
+        XCTAssertEqual(log.events, ["whisper load", "whisper unload"])
+    }
+
+    @MainActor func testLocalEngineUnloadsWhisperAndTheDiarizer() {
+        let engine = LocalTranscriptionEngine(factory: { FakeLiveEngine(kind: $0) })
+        engine.unloadOfflineModels()
+        XCTAssertFalse(engine.holdsOfflineModels)
+        XCTAssertEqual(engine.engineState, .unloaded)
+    }
+
+    func testOverdueParakeetWindowDetailAdmitsASlowDecode() {
+        XCTAssertEqual(ParakeetLiveEngine.overdueDetail(through: 13),
+                       "Parakeet's window ending at 13 s took longer than 9 s or never finished")
     }
 }

@@ -34,8 +34,9 @@ passes add transient copies of up to about 16 s (Nemotron recovery) and about 30
 (Parakeet window). The samples are freed, not zeroed. Details and sources are in
 [docs/live-engines.md](docs/live-engines.md).
 
-In the polish mode the resident live engine is unloaded before Whisper loads, and the
-next recording loads it again.
+In the polish mode the resident live engine is unloaded before Whisper loads, and
+Whisper and the speaker diarizer are unloaded when the polish pass ends, so a live engine
+and Whisper are not kept in memory together. The next recording loads the live engine again.
 
 ### Debug view
 

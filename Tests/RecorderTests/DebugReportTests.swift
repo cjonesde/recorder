@@ -5,15 +5,18 @@ import XCTest
 final class DebugReportTests: XCTestCase {
     private var created: [URL] = []
     private var previousEngine = Preferences.liveEngine
+    private var previousDebug = Preferences.showDebugInfo
 
     override func setUp() async throws {
         previousEngine = Preferences.liveEngine
+        previousDebug = Preferences.showDebugInfo
     }
 
     override func tearDown() async throws {
         for folder in created { try? FileManager.default.removeItem(at: folder) }
         created = []
         Preferences.liveEngine = previousEngine
+        Preferences.showDebugInfo = previousDebug
     }
 
     private func recorderWithSamples(preparation: PreparationInfo? = nil, speechService: Bool = false) -> DiagnosticsRecorder {
@@ -172,17 +175,61 @@ final class DebugReportTests: XCTestCase {
         XCTAssertFalse(before.events.contains { $0.kind == "live engine unloaded for polish" })
 
         let fake = FakeLiveEngine(kind: .parakeet)
+        _ = try await fake.prepare(language: "en-US", progress: { _ in })
         let model = RecorderModel(
             engineFactory: { _ in fake },
             whisperLoader: { _ in },
             fileTranscriber: { _ in throw CancellationError() }
         )
+        model.showDebugInfo = true
         model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: nil, diagnostics: recorder, reportLanguage: "en-US")
         for _ in 0..<200 where fake.unloadCalls == 0 { try await Task.sleep(for: .milliseconds(25)) }
         try await Task.sleep(for: .milliseconds(100))
 
         let after = try JSONDecoder().decode(DebugReport.self, from: Data(contentsOf: folder.appendingPathComponent("debug.json")))
         XCTAssertTrue(after.events.contains { $0.kind == "live engine unloaded for polish" })
+    }
+
+    func testRetriedPolishRecordsTheUnloadOnceBecauseTheEngineIsAlreadyUnloaded() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        created.append(folder)
+        let recorder = recorderWithSamples()
+        let fake = FakeLiveEngine(kind: .parakeet)
+        _ = try await fake.prepare(language: "en-US", progress: { _ in })
+        let model = RecorderModel(engineFactory: { _ in fake }, whisperLoader: { _ in }, fileTranscriber: { _ in throw CancellationError() })
+        model.showDebugInfo = true
+        model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: nil, diagnostics: recorder, reportLanguage: "en-US")
+        for _ in 0..<200 where !Self.isFailed(model.transcriptionState) { try await Task.sleep(for: .milliseconds(25)) }
+        model.retryTranscription()
+        for _ in 0..<200 where fake.unloadCalls < 2 { try await Task.sleep(for: .milliseconds(25)) }
+        for _ in 0..<200 where !Self.isFailed(model.transcriptionState) { try await Task.sleep(for: .milliseconds(25)) }
+
+        XCTAssertEqual(fake.unloadCalls, 2)
+        XCTAssertEqual(recorder.events.filter { $0.kind == "live engine unloaded for polish" }.count, 1)
+    }
+
+    func testRetryAfterDebugIsSwitchedOffDoesNotTouchDebugJSON() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        created.append(folder)
+        let recorder = recorderWithSamples()
+        let fake = FakeLiveEngine(kind: .parakeet)
+        _ = try await fake.prepare(language: "en-US", progress: { _ in })
+        let model = RecorderModel(engineFactory: { _ in fake }, whisperLoader: { _ in }, fileTranscriber: { _ in throw CancellationError() })
+        model.showDebugInfo = false
+        model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: nil, diagnostics: recorder, reportLanguage: "en-US")
+        for _ in 0..<200 where fake.unloadCalls == 0 { try await Task.sleep(for: .milliseconds(25)) }
+        for _ in 0..<200 where !Self.isFailed(model.transcriptionState) { try await Task.sleep(for: .milliseconds(25)) }
+
+        XCTAssertEqual(fake.unloadCalls, 1)
+        XCTAssertFalse(recorder.events.contains { $0.kind == "live engine unloaded for polish" })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("debug.json").path))
+    }
+
+    private static func isFailed(_ state: TranscriptionState) -> Bool {
+        if case .failed = state { return true }
+        return false
     }
 
     func testUnloadForPolishWithoutDiagnosticsWritesNoDebugJSON() async throws {

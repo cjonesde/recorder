@@ -330,6 +330,31 @@ engine configuration and the samples fed, and must say that erasure is not guara
 For Parakeet the 10 s lag limit applies to the backlog behind the engine, on top of the
 13 s window latency described above.
 
+The debug drawer shows an "Erasure: not guaranteed" row under the held-audio row whenever
+Nemotron or Parakeet is the engine, and the pop-out window lists the same row with the
+other engine rows.
+
+## Finalization watchdog and a hung engine
+
+When a FluidAudio call does not return within the 30 s finalization watchdog, the
+recording ends with "finalization timed out" and the engine drops its manager without
+waiting for it: Nemotron discards its `StreamingNemotronMultilingualAsrManager`, Parakeet
+discards its sliding-window session and its loaded `AsrModels`. Nothing else is queued
+behind the hung call, so unloading the engine (before a polish pass) and choosing another
+engine return at once. The next preparation builds a fresh manager from the model cache.
+If the hung call ever returns, the dropped manager is reset and cleaned up on its own; it
+is never reused, so its reset cannot reach a later session. Until then its models stay in
+memory, which is the price of keeping the app usable.
+
+## Apple held audio (debug view)
+
+For Apple the held figure is measured: the app inbox (at most 0.5 s per source) plus the
+chunks queued in the `AsyncStream` that the analyzer has not taken yet (at most four
+100 ms chunks). Audio the analyzer has taken is inside Apple and is shown as unknown. The
+"Buffer release" row gives the median (of the most recent 1,000) and the longest lifetime
+of the erasing PCM buffers handed to Apple, from creation until the erasing deallocator
+runs.
+
 ## Apple speech service process (debug view memory)
 
 Apple recognition does not run inside Recorder. During an Apple session the work happens in
@@ -358,8 +383,12 @@ are warning, 4 and above are critical.
 ## Polish mode and the debug view
 
 In the polish mode (keep audio, then run Whisper) the resident live engine is unloaded
-before Whisper loads, so the two never hold models at once. The debug event is "live
-engine unloaded for polish". The next recording loads the engine again from its cache.
+before Whisper loads, so the two never hold models at once. When the polish pass ends,
+whether it succeeded or failed, Whisper and the SpeakerKit diarizer are unloaded too, and
+pressing Record with live transcription on unloads them again before the live engine
+prepares. The debug event "live engine unloaded for polish" is written only when an
+engine was loaded and debug info is on. The next recording loads the engine again from
+its cache, and the next polish pass loads Whisper again.
 The transcript records the live engine that ran as `liveEngine`.
 
 The debug toggle (Settings, **Show debug info**) adds a drawer to the panel, a pop-out
