@@ -609,7 +609,7 @@ final class SystemAudioTap {
             while true {
                 if ring.totalDropped > 0, !reportedOverrun {
                     reportedOverrun = true
-                    self?.onFatalError?(StreamingSpeechError.inputOverrun)
+                    self?.onFatalError?(LiveStopError(reason: .desktopRingOverflow, detail: nil))
                 }
                 let stopRequested = self?.writerShouldStop.withLock { $0 } ?? true
                 let n = ring.read(into: dst, maxCount: chunkFrames)

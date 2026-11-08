@@ -6,13 +6,11 @@ import Foundation
 enum StreamingSpeechError: LocalizedError {
     case unavailableLanguage
     case unsupportedFormat
-    case inputOverrun
 
     var errorDescription: String? {
         switch self {
         case .unavailableLanguage: return "Apple speech recognition does not support the selected language on this Mac."
         case .unsupportedFormat: return "Apple speech recognition returned an unsupported audio format."
-        case .inputOverrun: return "Transcription could not keep up. Capture stopped to avoid retaining an audio backlog."
         }
     }
 }
@@ -105,8 +103,12 @@ final class StreamingAudioInput: @unchecked Sendable {
     private var channels: [Channel] = []
     private var format: AVAudioFormat?
     private var accepting = false
-    private var overrun = false
+    private var overrunReason: LiveStopReason?
     private var position: Int64 = 0
+
+    private static func agedReason(_ channelIndex: Int) -> LiveStopReason {
+        channelIndex == Source.desktop.rawValue ? .desktopAudioAged : .micAudioAged
+    }
 
     var pendingFrames: Int { lock.withLock { channels.reduce(0) { $0 + $1.count } } }
 
@@ -115,7 +117,7 @@ final class StreamingAudioInput: @unchecked Sendable {
             channels = [Channel(rate: format.sampleRate), Channel(rate: format.sampleRate)]
             self.format = format
             accepting = true
-            overrun = false
+            overrunReason = nil
             position = 0
         }
     }
@@ -143,9 +145,10 @@ final class StreamingAudioInput: @unchecked Sendable {
                 let written = channel.resampler.process(samples + offset, count: n,
                     into: channel.scratch, capacity: channel.capacity)
                 defer { AudioMemory.erase(channel.scratch, count: written) }
-                guard channel.count + written <= channel.capacity,
-                      channel.count == 0 || now - channel.oldest < 0.5 else {
-                    overrun = true
+                let failure: LiveStopReason? = channel.count + written > channel.capacity ? .handoffFull
+                    : channel.count > 0 && now - channel.oldest >= 0.5 ? Self.agedReason(source.rawValue) : nil
+                if let failure {
+                    overrunReason = failure
                     accepting = false
                     for channel in channels { channel.clear() }
                     return
@@ -161,16 +164,17 @@ final class StreamingAudioInput: @unchecked Sendable {
 
     func drain(flush: Bool = false) throws -> Chunk? {
         try lock.withLock {
-            guard !overrun else { throw StreamingSpeechError.inputOverrun }
+            if let overrunReason { throw LiveStopError(reason: overrunReason, detail: nil) }
             guard let format, channels.count == 2 else { return nil }
             let rate = format.sampleRate
             let desktop = channels[0], mic = channels[1]
             let now = ProcessInfo.processInfo.systemUptime
-            for channel in channels where channel.count > 0 && now - channel.oldest > 0.5 {
-                overrun = true
+            for (index, channel) in channels.enumerated() where channel.count > 0 && now - channel.oldest > 0.5 {
+                let reason = Self.agedReason(index)
+                overrunReason = reason
                 accepting = false
                 for channel in channels { channel.clear() }
-                throw StreamingSpeechError.inputOverrun
+                throw LiveStopError(reason: reason, detail: nil)
             }
             let available: Int
             if flush || desktop.count == 0 && now - desktop.lastFeed > 0.1

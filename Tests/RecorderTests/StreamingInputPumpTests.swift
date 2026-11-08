@@ -61,7 +61,7 @@ final class StreamingInputPumpTests: XCTestCase {
             inbox: inbox,
             deliver: { chunk in
                 tally.add(Int(chunk.buffer.frameLength))
-                throw StreamingSpeechError.inputOverrun
+                throw LiveStopError(reason: .engineQueueFull, detail: nil)
             },
             onFailure: { tally.fail($0) }
         )

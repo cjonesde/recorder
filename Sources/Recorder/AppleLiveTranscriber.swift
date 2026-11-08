@@ -85,6 +85,7 @@ final class AppleLiveTranscriber {
     private(set) var isSessionActive = false
     private(set) var revision = 0
     private(set) var failureMessage: String?
+    private(set) var stopReason: LiveStopReason?
     private(set) var localeIdentifier = ""
     var labelSpeakers = true
     var onFailure: (() -> Void)?
@@ -162,7 +163,7 @@ final class AppleLiveTranscriber {
             deliver: { chunk in
                 energyLog.record(chunk)
                 guard case .enqueued = continuation.yield(AnalyzerInput(buffer: chunk.buffer, bufferStartTime: chunk.startTime)) else {
-                    throw StreamingSpeechError.inputOverrun
+                    throw LiveStopError(reason: .engineQueueFull, detail: nil)
                 }
             },
             onFailure: { [weak self] error in
@@ -186,8 +187,7 @@ final class AppleLiveTranscriber {
         continuation = nil
         let timeout = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(10)) } catch { return }
-            self?.fail(NSError(domain: "Speech finalization timed out", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Speech finalization timed out"]), generation: generation)
+            self?.fail(LiveStopError(reason: .finalizationTimedOut, detail: nil), generation: generation)
             await analyzer.cancelAndFinishNow()
         }
         await analysisTask?.value
@@ -224,6 +224,7 @@ final class AppleLiveTranscriber {
         energyLog.clear()
         isSessionActive = false
         failureMessage = nil
+        stopReason = nil
         text = StreamingTranscript()
         revision += 1
     }
@@ -235,7 +236,9 @@ final class AppleLiveTranscriber {
 
     private func fail(_ error: Error, generation: Int) {
         guard generation == self.generation, failureMessage == nil else { return }
-        failureMessage = error.localizedDescription
+        let stop = error as? LiveStopError ?? LiveStopError(reason: .engineError, detail: error.localizedDescription)
+        failureMessage = stop.localizedDescription
+        stopReason = stop.reason
         inbox.discard()
         continuation?.finish()
         pump?.stop()
