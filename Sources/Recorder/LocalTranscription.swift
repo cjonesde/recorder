@@ -88,6 +88,7 @@ final class LocalTranscriptionEngine {
     nonisolated let router = LiveInboxRouter()
     @ObservationIgnored private let factory: EngineFactory
     @ObservationIgnored var onFailure: (() -> Void)?
+    @ObservationIgnored private var pendingSelection: Task<Void, Never>?
 
     init(factory: @escaping EngineFactory = LocalTranscriptionEngine.defaultFactory) {
         let host = WhisperModelStorage.makeHost()
@@ -98,6 +99,16 @@ final class LocalTranscriptionEngine {
     }
 
     func select(_ kind: LiveEngineKind) async {
+        let earlier = pendingSelection
+        let selection = Task { @MainActor [weak self] in
+            await earlier?.value
+            await self?.replaceEngine(with: kind)
+        }
+        pendingSelection = selection
+        await selection.value
+    }
+
+    private func replaceEngine(with kind: LiveEngineKind) async {
         guard kind != engine.kind else { return }
         let previous = engine
         router.set(nil)

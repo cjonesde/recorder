@@ -19,15 +19,20 @@ class FakeLiveEngine: LiveSpeechEngine {
 
     let prepareError: Error?
     let prepareDelay: Duration?
+    let startSessionError: Error?
+    let unloadDelay: Duration?
     private(set) var prepareCalls = 0
     private(set) var startSessionCalls = 0
     private(set) var unloadCalls = 0
     private(set) var capturedErrors: [Error] = []
 
-    init(kind: LiveEngineKind, prepareError: Error? = nil, prepareDelay: Duration? = nil) {
+    init(kind: LiveEngineKind, prepareError: Error? = nil, prepareDelay: Duration? = nil,
+         startSessionError: Error? = nil, unloadDelay: Duration? = nil) {
         self.kind = kind
         self.prepareError = prepareError
         self.prepareDelay = prepareDelay
+        self.startSessionError = startSessionError
+        self.unloadDelay = unloadDelay
     }
 
     func prepare(language: String, progress: @escaping @Sendable (Double?) -> Void) async throws -> PreparationInfo {
@@ -41,6 +46,7 @@ class FakeLiveEngine: LiveSpeechEngine {
 
     func startSession() throws {
         startSessionCalls += 1
+        if let startSessionError { throw startSessionError }
         isSessionActive = true
     }
 
@@ -70,8 +76,14 @@ class FakeLiveEngine: LiveSpeechEngine {
 
     func unload() async {
         unloadCalls += 1
+        if let unloadDelay { try? await Task.sleep(for: unloadDelay) }
         isLoaded = false
     }
+}
+
+@MainActor
+final class FakeEngineLog {
+    var made: [FakeLiveEngine] = []
 }
 
 final class LiveEngineSelectionTests: XCTestCase {
@@ -114,13 +126,55 @@ final class LiveEngineSelectionTests: XCTestCase {
 
     @MainActor
     func testCancelDuringLongPreparationNeverStartsCaptureAndNextRecordWorks() async throws {
-        let model = RecorderModel(engineFactory: { FakeLiveEngine(kind: $0, prepareDelay: .seconds(5)) })
+        let model = RecorderModel(engineFactory: { kind in
+            kind == .apple
+                ? FakeLiveEngine(kind: kind, prepareDelay: .milliseconds(300))
+                : FakeLiveEngine(kind: kind, startSessionError: URLError(.cancelled))
+        })
+        model.liveEngine = .apple
         model.startRecording(meeting: nil)
         try await Task.sleep(for: .milliseconds(100))
+        let first = model.live.engine as! FakeLiveEngine
+        XCTAssertEqual(first.prepareCalls, 1)
         model.trashAndStop()
+        try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(model.state, .idle)
         XCTAssertNil(model.currentSession)
-        XCTAssertEqual((model.live.engine as! FakeLiveEngine).startSessionCalls, 0)
+        XCTAssertEqual(first.startSessionCalls, 0)
+
+        model.liveEngine = .nemotron
+        model.startRecording(meeting: nil)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while model.state == .preparing, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let second = try XCTUnwrap(model.live.engine as? FakeLiveEngine)
+        XCTAssertEqual(second.kind, .nemotron)
+        XCTAssertEqual(second.prepareCalls, 1)
+        XCTAssertEqual(second.startSessionCalls, 1)
+        XCTAssertEqual(first.startSessionCalls, 0)
+        XCTAssertEqual(model.state, .idle)
+        XCTAssertNil(model.currentSession)
+    }
+
+    @MainActor
+    func testOverlappingSelectionsLeaveOneEngineOfTheLastKind() async {
+        let log = FakeEngineLog()
+        let engine = LocalTranscriptionEngine(factory: { kind in
+            let made = FakeLiveEngine(kind: kind, unloadDelay: .milliseconds(100))
+            log.made.append(made)
+            return made
+        })
+        let first = Task { await engine.select(.nemotron) }
+        await Task.yield()
+        let second = Task { await engine.select(.parakeet) }
+        await first.value
+        await second.value
+        XCTAssertEqual(engine.engine.kind, .parakeet)
+        XCTAssertEqual(log.made.map(\.kind), [.apple, .nemotron, .parakeet])
+        XCTAssertEqual(log.made.map(\.unloadCalls), [1, 1, 0])
+        XCTAssertTrue(engine.engine === log.made.last)
+        XCTAssertTrue(engine.router.current === log.made.last?.inbox)
     }
 
     @MainActor
