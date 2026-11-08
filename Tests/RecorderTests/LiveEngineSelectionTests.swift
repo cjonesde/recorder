@@ -225,8 +225,32 @@ final class LiveEngineSelectionTests: XCTestCase {
     }
 
     @MainActor
+    func testNemotronNamesItselfAndEstimatesHeldAudioWithoutLoading() {
+        let engine = LocalTranscriptionEngine.defaultFactory(.nemotron)
+        XCTAssertTrue(engine is NemotronLiveEngine)
+        XCTAssertEqual(engine.kind, .nemotron)
+        XCTAssertEqual(engine.displayName, "Nemotron 3.5 streaming")
+        XCTAssertEqual(engine.finalizationTimeout, .seconds(30))
+        XCTAssertFalse(engine.isLoaded)
+        XCTAssertThrowsError(try engine.startSession())
+        let diagnostics = engine.diagnostics()
+        XCTAssertEqual(diagnostics.heldAudioQuality, .estimated)
+        XCTAssertEqual(diagnostics.heldAudioSeconds, 0)
+        XCTAssertTrue(diagnostics.rows.contains(DiagnosticRow(label: "Recovery replay", value: "not observable", quality: .unknown)))
+        XCTAssertTrue(diagnostics.rows.contains { $0.label == "Handoff peak" && $0.quality == .measured })
+        engine.captureFailed(LiveStopError(reason: .desktopRingOverflow, detail: nil))
+        XCTAssertEqual(engine.stopReason, .desktopRingOverflow)
+    }
+
+    @MainActor
+    func testNemotronModelsLiveUnderRecorderSpeechModels() {
+        let variant = NemotronLiveEngine.variantDirectory(language: "de-DE")
+        XCTAssertTrue(variant.path.hasSuffix("Application Support/Recorder/SpeechModels/nemotron-multilingual/latin/560ms"), variant.path)
+    }
+
+    @MainActor
     func testPlaceholderEnginesRefuseToPrepareWithTheirName() async {
-        for kind in [LiveEngineKind.nemotron, .parakeet] {
+        for kind in [LiveEngineKind.parakeet] {
             let engine = LocalTranscriptionEngine.defaultFactory(kind)
             XCTAssertEqual(engine.kind, kind)
             do {

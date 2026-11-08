@@ -78,7 +78,8 @@ final class LocalTranscriptionEngine {
     nonisolated static let defaultFactory: EngineFactory = { kind in
         switch kind {
         case .apple: return AppleLiveTranscriber()
-        case .nemotron, .parakeet: return UnavailableLiveEngine(kind: kind)
+        case .nemotron: return NemotronLiveEngine()
+        case .parakeet: return UnavailableLiveEngine(kind: kind)
         }
     }
 
