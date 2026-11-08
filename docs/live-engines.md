@@ -327,3 +327,28 @@ debug view must therefore report the held amount for these engines as estimated 
 engine configuration and the samples fed, and must say that erasure is not guaranteed.
 For Parakeet the 10 s lag limit applies to the backlog behind the engine, on top of the
 13 s window latency described above.
+
+## Apple speech service process (debug view memory)
+
+Apple recognition does not run inside Recorder. During an Apple session the work happens in
+`localspeechrecognition`, the XPC service at
+`/System/Library/Frameworks/Speech.framework/Versions/A/XPCServices/localspeechrecognition.xpc`.
+
+How it was found (2026-11-08, macOS 26 SDK 27.2): a process list was taken, then the opt-in
+`AppleStreamingVerificationTests/testRealTimeReplayThroughProductionStreaming` replayed a
+12 s synthesized English clip while `ps` was polled every 0.5 s. `localspeechrecognition`
+was the only speech process that appeared; it ran as the logged-in user, its resident size
+grew from about 16 MB to about 66 MB during the session, and it exited after the session.
+`com.apple.siri.embeddedspeech` was already running and stayed near 1 MB, and the
+`corespeechd` daemons did not change, so neither is counted.
+
+`LiveSystemMetrics` finds the process with `proc_listallpids` and `proc_name`, then reads
+`proc_pid_rusage(RUSAGE_INFO_V4).ri_phys_footprint`. The opt-in
+`SystemMetricsTests/testSpeechServiceOptInFindsTheAppleProcessDuringASession`
+(`RECORDER_APPLE_STREAM=1`) confirms the read works from an unsandboxed process. When the
+process is not running or cannot be read, the value is unknown (nil), never Recorder's own
+footprint, and it is only read when Apple is the selected engine.
+
+Memory pressure comes from `sysctl kern.memorystatus_vm_pressure_level`: 1 is normal, 2 is
+warning, 4 is critical. Other values map to the nearest level: below 2 is normal, 2 and 3
+are warning, 4 and above are critical.

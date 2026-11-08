@@ -85,8 +85,19 @@ final class RecorderModel {
         didSet { Preferences.liveEngine = liveEngine }
     }
     var showDebugInfo: Bool = false {
-        didSet { Preferences.showDebugInfo = showDebugInfo }
+        didSet {
+            Preferences.showDebugInfo = showDebugInfo
+            if !showDebugInfo {
+                stopDiagnosticsSampling()
+                diagnostics = nil
+            }
+        }
     }
+
+    private(set) var diagnostics: DiagnosticsRecorder?
+    var isSamplingDiagnostics: Bool { diagnosticsTimer != nil }
+    @ObservationIgnored private var diagnosticsTimer: Timer?
+    @ObservationIgnored private var heartbeat: MainThreadHeartbeat?
 
     /// Saved voiceprints. Observed, so the Speakers pane updates as profiles change.
     let speakerStore = SpeakerProfileStore()
@@ -211,13 +222,17 @@ final class RecorderModel {
         }
 
         live.onFailure = { [weak self] in
-            guard let self, self.isCapturing else { return }
+            guard let self else { return }
+            if let reason = self.live.engine.stopReason { self.diagnostics?.recordStop(reason) }
+            guard self.isCapturing else { return }
             self.saveAndStop()
         }
     }
 
     private func handleCaptureFailure(_ error: Error) {
         guard isCapturing else { return }
+        diagnostics?.record("capture failed", detail: error.localizedDescription)
+        if let stop = error as? LiveStopError { diagnostics?.recordStop(stop.reason) }
         if live.isSessionActive { live.engine.captureFailed(error) }
         else { saveAndStop() }
         statusMessage = "Capture stopped: \(error.localizedDescription)"
@@ -255,11 +270,18 @@ final class RecorderModel {
         let kind = liveEngine
         state = .preparing
         statusMessage = wantsLive ? Self.preparingMessage(kind, progress: nil) : "Starting capture…"
+        let diagnostics = beginDiagnostics(engine: kind, settings: [
+            "language": language,
+            "liveTranscription": String(wantsLive),
+            "audioHandling": mode.rawValue,
+            "speakerLabels": String(speakerLabelsEnabled),
+        ])
         startupTask = Task { [weak self] in
             guard let self else { return }
             do {
                 try Task.checkCancellation()
                 if wantsLive {
+                    diagnostics?.record("preparation started", detail: nil)
                     await self.live.select(kind)
                     try Task.checkCancellation()
                     try await self.live.beginSession(language: language, progress: { [weak self] fraction in
@@ -268,12 +290,18 @@ final class RecorderModel {
                             self.statusMessage = Self.preparingMessage(kind, progress: fraction)
                         }
                     })
+                    if let info = self.live.lastPreparation {
+                        diagnostics?.setPreparation(info)
+                        diagnostics?.record("preparation finished", detail: String(format: "%.2f s, %@", info.loadSeconds, info.firstLoad ? "first load" : "cached"))
+                    }
                 }
                 try Task.checkCancellation()
                 guard self.state == .preparing else { return }
                 self.startPreparedRecording(meeting: meeting, mode: mode)
             } catch {
                 guard !Task.isCancelled else { return }
+                diagnostics?.record("preparation failed", detail: error.localizedDescription)
+                self.stopDiagnosticsSampling()
                 self.live.cancelSession()
                 self.state = .idle
                 self.statusMessage = "Could not prepare \(kind.label): \(error.localizedDescription)"
@@ -294,6 +322,8 @@ final class RecorderModel {
             session = try RecordingSession.create(now: now, meetingTitle: meeting?.title, mode: mode)
         } catch {
             statusMessage = "Could not create recording folder: \(error.localizedDescription)"
+            diagnostics?.record("capture failed", detail: error.localizedDescription)
+            stopDiagnosticsSampling()
             live.cancelSession()
             state = .idle
             return
@@ -340,11 +370,14 @@ final class RecorderModel {
         }
 
         // Start both captures.
+        heartbeat?.resetLongest()
         do {
             try tap.start(writingTo: session.desktopURL)
             try mic.start(writingTo: session.micURL)
         } catch {
             statusMessage = "Could not start capture: \(error.localizedDescription)"
+            diagnostics?.record("capture failed", detail: error.localizedDescription)
+            stopDiagnosticsSampling()
             _ = tap.stop()
             _ = mic.stop()
             try? FileManager.default.removeItem(at: session.folderURL)
@@ -354,6 +387,12 @@ final class RecorderModel {
             live.cancelSession()
             state = .idle
             return
+        }
+
+        if let diagnostics {
+            diagnostics.captureStarted(stall: heartbeat?.longestStall ?? 0)
+            diagnostics.setPhase(.recording)
+            watchFirstText(for: diagnostics)
         }
 
         silenceMonitor?.start()
@@ -435,6 +474,9 @@ final class RecorderModel {
 
         cancelTimersAndAlerts()
         state = .finishing
+        diagnostics?.setPhase(.finishing)
+        sampleDiagnostics()
+        stopDiagnosticsSampling()
 
         let mode = activeMode
         let folderURL = session.folderURL
@@ -445,8 +487,15 @@ final class RecorderModel {
         // Finalize the live transcript (transcribes the remaining tail) in
         // parallel with the mix. Only awaited when a transcript will actually
         // be written, so an off toggle or a slow model never delays the save.
+        let diagnostics = self.diagnostics
         let liveTask: Task<LiveSessionResult, Never>? = live.isSessionActive
-            ? Task { [live] in await live.endSession() }
+            ? Task { [live] in
+                let finalizingSince = ProcessInfo.processInfo.systemUptime
+                let result = await live.endSession()
+                if let reason = result.stopReason { diagnostics?.recordStop(reason) }
+                diagnostics?.record("finalized", detail: String(format: "%.2f s", ProcessInfo.processInfo.systemUptime - finalizingSince))
+                return result
+            }
             : nil
 
         // No audio was ever written, so there is nothing to mix and nothing to polish.
@@ -558,6 +607,10 @@ final class RecorderModel {
         guard state != .finishing else { return }
         startupTask?.cancel()
         startupTask = nil
+        if isSamplingDiagnostics {
+            diagnostics?.record("discarded", detail: nil)
+            stopDiagnosticsSampling()
+        }
         guard state != .idle else {
             resetToIdle()
             return
@@ -619,6 +672,59 @@ final class RecorderModel {
         }
         RunLoop.main.add(timer, forMode: .common)
         elapsedTimer = timer
+    }
+
+    private func beginDiagnostics(engine: LiveEngineKind, settings: [String: String]) -> DiagnosticsRecorder? {
+        stopDiagnosticsSampling()
+        guard showDebugInfo else {
+            diagnostics = nil
+            return nil
+        }
+        let heartbeat = MainThreadHeartbeat()
+        heartbeat.start()
+        self.heartbeat = heartbeat
+        let recorder = DiagnosticsRecorder(
+            source: LiveSystemMetrics(),
+            now: { ProcessInfo.processInfo.systemUptime },
+            engine: engine,
+            settings: settings
+        )
+        recorder.record("record pressed", detail: nil)
+        diagnostics = recorder
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.sampleDiagnostics()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        diagnosticsTimer = timer
+        return recorder
+    }
+
+    private func sampleDiagnostics() {
+        guard isSamplingDiagnostics, let diagnostics, let heartbeat else { return }
+        let stall = heartbeat.longestStall
+        heartbeat.resetLongest()
+        diagnostics.sample(engine: live.engine.diagnostics(), stall: stall, folder: currentSession?.folderURL)
+    }
+
+    private func stopDiagnosticsSampling() {
+        diagnosticsTimer?.invalidate()
+        diagnosticsTimer = nil
+        heartbeat?.stop()
+        heartbeat = nil
+    }
+
+    private func watchFirstText(for recorder: DiagnosticsRecorder) {
+        guard diagnostics === recorder, isSamplingDiagnostics else { return }
+        recorder.noteText(hypothesis: live.hypothesis, finalLines: live.confirmedLines.count)
+        guard !recorder.hasSeenFirstFinalText else { return }
+        withObservationTracking {
+            _ = live.hypothesis
+            _ = live.confirmedLines
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.watchFirstText(for: recorder) }
+        }
     }
 
     private func cancelTimersAndAlerts() {
