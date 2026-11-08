@@ -146,11 +146,26 @@ private struct TranscriptionPreferences: View {
             Section {
                 Toggle("Stream the transcript live while recording", isOn: $model.liveTranscriptionEnabled)
                     .disabled(!model.canStartRecording)
+                Picker("Live engine", selection: $model.liveEngine) {
+                    ForEach(LiveEngineKind.allCases) { kind in
+                        Text(kind.label).tag(kind)
+                    }
+                }
+                .disabled(!model.canChangeLiveEngine || !model.liveTranscriptionEnabled)
                 Text("Shows words while you speak. Transcript-only mode saves text and discards consumed audio buffers.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Live transcription")
+            }
+
+            Section {
+                Toggle("Show debug info", isOn: $model.showDebugInfo)
+                Text("Shows a debug drawer in the panel and writes debug.json beside each transcript. It records memory, lag and timing, never audio or transcript text.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Debug")
             }
 
             Section {
@@ -164,7 +179,7 @@ private struct TranscriptionPreferences: View {
             } header: {
                 Text("Saved audio: high-quality pass")
             } footer: {
-                Text("Whisper is used only for saved audio. Its model downloads when you transcribe a file. Live speech uses Apple’s on-device streaming recognizer.")
+                Text("Whisper is used only for saved audio. Its model downloads when you transcribe a file. Live speech uses the live engine chosen above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

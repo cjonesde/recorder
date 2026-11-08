@@ -34,7 +34,13 @@ struct RecorderPanel: View {
             controls
                 .disabled(model.state == .idle && !model.canStartRecording)
 
-            languagePicker
+            if model.liveTranscriptionEnabled {
+                enginePicker
+            }
+
+            if !model.liveTranscriptionEnabled || model.liveEngine.usesLanguagePicker {
+                languagePicker
+            }
 
             audioHandlingChip
 
@@ -47,6 +53,13 @@ struct RecorderPanel: View {
             if model.live.isSessionActive {
                 Divider()
                 liveTranscriptSection
+            }
+
+            if model.showDebugInfo {
+                Divider()
+                DebugDrawerView(recorder: model.diagnostics) {
+                    DebugWindowController.shared.show(model: model)
+                }
             }
 
             if showTranscription {
@@ -283,7 +296,7 @@ struct RecorderPanel: View {
 
                 Spacer()
 
-                Text("Apple · \(TranscriptionLanguage.label(for: model.transcriptionLanguage))")
+                Text(liveEngineCaption)
                     .font(.caption).foregroundStyle(.secondary)
 
                 Button {
@@ -302,6 +315,25 @@ struct RecorderPanel: View {
         }
     }
 
+    private var liveEngineCaption: String {
+        let kind = model.live.engine.kind
+        guard kind.usesLanguagePicker else { return kind.label }
+        return "\(kind.label) · \(TranscriptionLanguage.label(for: model.transcriptionLanguage))"
+    }
+
+    private var enginePicker: some View {
+        Picker("Live engine", selection: Binding(
+            get: { model.liveEngine },
+            set: { model.liveEngine = $0 }
+        )) {
+            ForEach(LiveEngineKind.allCases) { kind in
+                Text(kind.label).tag(kind)
+            }
+        }
+        .font(.caption)
+        .disabled(!model.canChangeLiveEngine)
+    }
+
     private var languagePicker: some View {
         Picker("Speech language", selection: Binding(
             get: { model.transcriptionLanguage },
@@ -312,7 +344,7 @@ struct RecorderPanel: View {
             }
         }
         .font(.caption)
-        .disabled(!model.canStartRecording)
+        .disabled(!model.canChangeLiveEngine)
     }
 
     @ViewBuilder
