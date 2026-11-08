@@ -17,7 +17,10 @@ final class RecorderModel {
     var meetings: [Meeting] = []
     var currentSession: RecordingSession? = nil
     var elapsed: TimeInterval = 0
-    var statusMessage: String? = nil
+    var statusMessage: String? = nil {
+        didSet { appendDebugReportNotice() }
+    }
+    @ObservationIgnored private var debugReportNotice: String?
 
     /// On-device transcription engines. Exposed so the panel can
     /// render the live transcript and engine status directly.
@@ -682,6 +685,7 @@ final class RecorderModel {
     private func beginDiagnostics(engine: LiveEngineKind, liveTranscription: Bool, settings: [String: String]) -> DiagnosticsRecorder? {
         stopDiagnosticsSampling()
         diagnosticsFolder = nil
+        debugReportNotice = nil
         guard showDebugInfo else {
             diagnostics = nil
             return nil
@@ -719,11 +723,21 @@ final class RecorderModel {
         guard let recorder, diagnostics === recorder else { return }
         sampleDiagnostics()
         stopDiagnosticsSampling()
+        persistDebugReport(recorder, folder: folder, language: language)
+    }
+
+    func persistDebugReport(_ recorder: DiagnosticsRecorder, folder: URL, language: String?) {
         do {
             try recorder.report(language: language).write(to: folder)
         } catch {
-            recorder.record("debug report failed", detail: error.localizedDescription)
+            debugReportNotice = "Could not write debug.json: \(error.localizedDescription)"
+            appendDebugReportNotice()
         }
+    }
+
+    private func appendDebugReportNotice() {
+        guard let notice = debugReportNotice, statusMessage?.hasSuffix(notice) != true else { return }
+        statusMessage = [statusMessage, notice].compactMap { $0 }.joined(separator: " ")
     }
 
     private static func removeFolderIfEmpty(_ folder: URL) {

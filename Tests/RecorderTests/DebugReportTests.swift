@@ -140,6 +140,28 @@ final class DebugReportTests: XCTestCase {
         XCTAssertEqual(report.osVersion, ProcessInfo.processInfo.operatingSystemVersionString)
     }
 
+    func testFailedDebugJSONWriteIsShownInTheStatusMessageAndSurvivesLaterStatusUpdates() {
+        let model = RecorderModel(engineFactory: { FakeLiveEngine(kind: $0) })
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("nope")
+        model.statusMessage = "Transcript saved, no audio kept"
+        model.persistDebugReport(recorderWithSamples(), folder: missing, language: nil)
+        XCTAssertTrue(model.statusMessage?.contains("Transcript saved, no audio kept") == true)
+        XCTAssertTrue(model.statusMessage?.contains("Could not write debug.json:") == true)
+        model.statusMessage = "Nothing to save"
+        XCTAssertTrue(model.statusMessage?.hasPrefix("Nothing to save") == true)
+        XCTAssertTrue(model.statusMessage?.contains("Could not write debug.json:") == true)
+    }
+
+    func testSuccessfulDebugJSONWriteLeavesTheStatusMessageAlone() throws {
+        let model = RecorderModel(engineFactory: { FakeLiveEngine(kind: $0) })
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        created.append(folder)
+        model.statusMessage = "Saved"
+        model.persistDebugReport(recorderWithSamples(), folder: folder, language: nil)
+        XCTAssertEqual(model.statusMessage, "Saved")
+    }
+
     private func recordAndSave(_ model: RecorderModel, seconds: TimeInterval) async throws -> URL {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["RECORDER_LIVE_MODES"] == "1",
