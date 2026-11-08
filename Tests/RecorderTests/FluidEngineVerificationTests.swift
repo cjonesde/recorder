@@ -69,7 +69,6 @@ final class FluidEngineVerificationTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         try XCTSkipUnless(env["RECORDER_FLUID_STREAM"] == "1" && env["RECORDER_FLUID_ENGINE"] == "parakeet")
         let audio = try XCTUnwrap(env["RECORDER_TEST_AUDIO"])
-        let speechOnset = Double(env["RECORDER_SPEECH_ONSET"] ?? "") ?? 4.30
         let samples = try AudioProcessor.loadAudioAsFloatArray(fromPath: audio)
         let engine = LocalTranscriptionEngine()
         await engine.select(.parakeet)
@@ -122,8 +121,8 @@ final class FluidEngineVerificationTests: XCTestCase {
         print("Parakeet replay text:\n" + final.lines.map(\.text).joined(separator: "\n"))
         XCTAssertTrue(final.complete, engine.engine.failureMessage ?? "incomplete")
         XCTAssertFalse(final.lines.isEmpty)
-        XCTAssertLessThanOrEqual(firstHypothesis ?? .infinity, speechOnset + 3,
-                                 "No provisional hypothesis within 3 s of speech onset")
+        XCTAssertLessThanOrEqual(firstHypothesis ?? .infinity, 16,
+                                 "No provisional hypothesis within 16 s of the stream start")
         XCTAssertEqual(engine.inbox.pendingFrames, 0)
         guard let output = env["RECORDER_STREAM_OUTPUT"] else { return }
         var usage = rusage()

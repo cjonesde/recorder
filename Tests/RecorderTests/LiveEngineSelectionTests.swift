@@ -287,6 +287,49 @@ final class LiveEngineSelectionTests: XCTestCase {
         XCTAssertNotNil(gate.lastDecode)
     }
 
+    func testParakeetFeedGateResumesWhenTheOverdueWindowArrives() async {
+        let gate = ParakeetFeedGate()
+        gate.add(Int(16 * ParakeetLiveEngine.sampleRate), at: Date())
+        let wait = Task { await gate.waitForRoom() }
+        try? await Task.sleep(for: .milliseconds(20))
+        gate.windowCompleted(at: Date())
+        let result = await wait.value
+        XCTAssertEqual(result, .room)
+    }
+
+    func testParakeetFeedGateReportsAWindowThatNeverArrives() async {
+        let gate = ParakeetFeedGate(overdueAfter: .milliseconds(50))
+        gate.add(Int(16 * ParakeetLiveEngine.sampleRate), at: Date())
+        let result = await gate.waitForRoom()
+        XCTAssertEqual(result, .overdue(through: 13))
+    }
+
+    func testParakeetFeedGateReleasesTheFeedWhenInputFinishes() async {
+        let gate = ParakeetFeedGate()
+        gate.add(Int(16 * ParakeetLiveEngine.sampleRate), at: Date())
+        let wait = Task { await gate.waitForRoom() }
+        try? await Task.sleep(for: .milliseconds(20))
+        gate.finishInput()
+        let result = await wait.value
+        XCTAssertEqual(result, .room)
+        let again = await gate.waitForRoom()
+        XCTAssertEqual(again, .room)
+    }
+
+    func testParakeetFeedGateCloseEndsTheWait() async {
+        let gate = ParakeetFeedGate()
+        gate.add(Int(16 * ParakeetLiveEngine.sampleRate), at: Date())
+        let wait = Task { await gate.waitForRoom() }
+        try? await Task.sleep(for: .milliseconds(20))
+        gate.close()
+        let result = await wait.value
+        XCTAssertEqual(result, .closed)
+    }
+
+    func testOverdueParakeetWindowStopsBeforeTheHandoffOverflows() {
+        XCTAssertLessThan(ParakeetLiveEngine.overdueWindowSeconds, ParakeetLiveEngine.handoffSeconds)
+    }
+
     func testFinalizationTimeoutMessageDoesNotNameAFixedWait() {
         XCTAssertFalse(LiveStopReason.finalizationTimedOut.message.contains("10 s"))
     }

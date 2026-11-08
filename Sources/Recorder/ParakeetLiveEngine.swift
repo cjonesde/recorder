@@ -80,19 +80,31 @@ final class ParakeetFeedGate: @unchecked Sendable {
         let seconds: Double
     }
 
+    enum Wait: Equatable, Sendable {
+        case room
+        case closed
+        case overdue(through: Double)
+    }
+
     private let lock = NSLock()
     private let firstWindowSamples: Int
     private let windowStepSamples: Int
     private let roomSamples: Int
+    private let overdueAfter: Duration
     private var fedSamples = 0
     private var completedWindows = 0
     private var decodeStart: Date?
     private var lastUpdate: Date?
     private var decode: Decode?
-    private var waiter: CheckedContinuation<Bool, Never>?
+    private var waiter: CheckedContinuation<Wait, Never>?
+    private var waiterTimer: Task<Void, Never>?
+    private var waiterToken = 0
+    private var blockedSince: ContinuousClock.Instant?
     private var closed = false
+    private var draining = false
 
-    init(config: SlidingWindowAsrConfig = .streaming) {
+    init(config: SlidingWindowAsrConfig = .streaming, overdueAfter: Duration = .seconds(ParakeetLiveEngine.overdueWindowSeconds)) {
+        self.overdueAfter = overdueAfter
         let rate = ParakeetLiveEngine.sampleRate
         firstWindowSamples = Int(((config.chunkSeconds + config.rightContextSeconds) * rate).rounded())
         windowStepSamples = Int((config.chunkSeconds * rate).rounded())
@@ -116,22 +128,24 @@ final class ParakeetFeedGate: @unchecked Sendable {
             let before = fedSamples
             fedSamples += samples
             if before < nextTrigger, fedSamples >= nextTrigger { decodeStart = time }
+            if blockedSince == nil, queuedSamples >= roomSamples { blockedSince = .now }
         }
     }
 
     func windowCompleted(at time: Date) {
-        let resumed: CheckedContinuation<Bool, Never>? = lock.withLock {
+        let resumed: (CheckedContinuation<Wait, Never>, Task<Void, Never>?)? = lock.withLock {
             let started = decodeStart ?? lastUpdate ?? time
             let through = Double(min(nextTrigger, fedSamples)) / ParakeetLiveEngine.sampleRate
             decode = Decode(through: through, seconds: max(0, time.timeIntervalSince(started)))
             completedWindows += 1
             lastUpdate = time
             decodeStart = fedSamples >= nextTrigger ? time : nil
-            guard let waiter, queuedSamples < roomSamples else { return nil }
-            self.waiter = nil
-            return waiter
+            blockedSince = queuedSamples >= roomSamples ? .now : nil
+            guard queuedSamples < roomSamples else { return nil }
+            return takeWaiter()
         }
-        resumed?.resume(returning: true)
+        resumed?.1?.cancel()
+        resumed?.0.resume(returning: .room)
     }
 
     func inputEnded(at time: Date) {
@@ -140,12 +154,31 @@ final class ParakeetFeedGate: @unchecked Sendable {
         }
     }
 
-    func waitForRoom() async -> Bool {
+    func finishInput() {
+        let resumed = lock.withLock {
+            draining = true
+            return takeWaiter()
+        }
+        resumed?.1?.cancel()
+        resumed?.0.resume(returning: .room)
+    }
+
+    func waitForRoom() async -> Wait {
         await withCheckedContinuation { continuation in
-            let ready: Bool? = lock.withLock {
-                if closed { return false }
-                if queuedSamples < roomSamples { return true }
+            let ready: Wait? = lock.withLock {
+                if closed { return .closed }
+                if draining || queuedSamples < roomSamples { return .room }
+                let since = blockedSince ?? .now
+                blockedSince = since
+                if since + overdueAfter <= .now { return .overdue(through: dueSeconds) }
+                waiterToken += 1
+                let token = waiterToken
+                let remaining = since + overdueAfter - .now
                 waiter = continuation
+                waiterTimer = Task.detached { [weak self] in
+                    try? await Task.sleep(for: remaining)
+                    self?.expire(token)
+                }
                 return nil
             }
             if let ready { continuation.resume(returning: ready) }
@@ -153,12 +186,33 @@ final class ParakeetFeedGate: @unchecked Sendable {
     }
 
     func close() {
-        let pending: CheckedContinuation<Bool, Never>? = lock.withLock {
+        let resumed = lock.withLock {
             closed = true
-            defer { waiter = nil }
-            return waiter
+            return takeWaiter()
         }
-        pending?.resume(returning: false)
+        resumed?.1?.cancel()
+        resumed?.0.resume(returning: .closed)
+    }
+
+    private var dueSeconds: Double { Double(nextTrigger) / ParakeetLiveEngine.sampleRate }
+
+    private func takeWaiter() -> (CheckedContinuation<Wait, Never>, Task<Void, Never>?)? {
+        guard let waiter else { return nil }
+        let timer = waiterTimer
+        self.waiter = nil
+        waiterTimer = nil
+        return (waiter, timer)
+    }
+
+    private func expire(_ token: Int) {
+        let resumed: (CheckedContinuation<Wait, Never>, Double)? = lock.withLock {
+            guard token == waiterToken, let waiter else { return nil }
+            self.waiter = nil
+            waiterTimer = nil
+            return (waiter, dueSeconds)
+        }
+        guard let resumed else { return }
+        resumed.0.resume(returning: .overdue(through: resumed.1))
     }
 }
 
@@ -167,6 +221,7 @@ final class ParakeetFeedGate: @unchecked Sendable {
 final class ParakeetLiveEngine: LiveSpeechEngine {
     nonisolated static let sampleRate = 16_000.0
     nonisolated static let handoffSeconds = 10.0
+    nonisolated static let overdueWindowSeconds = 9.0
     nonisolated static let libraryBufferSeconds = 26.0
     nonisolated static let computeUnitsLabel = "CPU and Neural Engine"
 
@@ -279,7 +334,16 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
                 await self?.fail(error, generation: generation)
                 return
             }
-            while await gate.waitForRoom(), var samples = await handoff.next() {
+            feeding: while true {
+                switch await gate.waitForRoom() {
+                case .room: break
+                case .closed: break feeding
+                case .overdue(let through):
+                    let detail = String(format: "Parakeet returned no result for the window ending at %.0f s", through)
+                    await self?.fail(LiveStopError(reason: .engineError, detail: detail), generation: generation)
+                    return
+                }
+                guard var samples = await handoff.next() else { break }
                 let count = samples.count
                 let buffer = Self.buffer(copying: samples)
                 AudioMemory.discard(&samples)
@@ -319,6 +383,7 @@ final class ParakeetLiveEngine: LiveSpeechEngine {
         pump = nil
         inbox.discard()
         handoff.finish()
+        gate.finishInput()
         let consumer = self.consumer
         let reader = self.reader
         let work = Task.detached { [weak self] () -> Finalization in

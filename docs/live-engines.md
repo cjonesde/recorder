@@ -213,6 +213,15 @@ exactly the model maximum of 240,000 samples (`Shared/ASRConstants.swift:12`, `S
 - One update per processed window, yielded at `SW:576-588`. The first update arrives once
   13 s of audio have been fed (chunk plus right context), then one per 11 s of audio,
   plus decode time. `flushRemaining` emits the tail windows after `finish()` (`SW:384-428`).
+- No text for the first 13 s: Parakeet shows nothing, not even a provisional hypothesis, for
+  the first 13 s of a recording. `appendSamplesAndProcess` decodes a window only once the fed
+  audio reaches `nextWindowCenterStart + chunk + right`, with the centre starting at 0
+  (`SW:354-365`), so the first window needs 11 s plus 2 s. `hypothesisChunkSeconds` is stored
+  in the config but never read by `SlidingWindowAsrManager`, so there is no faster partial
+  path. Measured on the bilingual fixture: first text at 13.4 s.
+- A window that throws yields no update (`SW:590-603`) but still advances the window centre,
+  so the app's window count would stall. Recorder stops the session with an engine error
+  when an expected window update is 9 s overdue, before the 10 s handoff overflows.
 - Fields (`SW:933-968`): `text` (this window's new text only, not cumulative: built from
   the current window's tokens, `SW:495-505`), `isConfirmed` (confidence at least 0.80 and
   at least 10 s of audio received, `SW:530-533`), `confidence`, `timestamp` (wall clock),
