@@ -39,6 +39,40 @@ struct StreamingTranscript {
     }
 }
 
+final class StreamingEnergyLog: @unchecked Sendable {
+    private struct Entry {
+        let start: TimeInterval
+        let end: TimeInterval
+        let desktop: Float
+        let mic: Float
+    }
+
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+
+    func record(_ chunk: StreamingAudioInput.Chunk) {
+        lock.withLock {
+            entries.append(Entry(start: chunk.start, end: chunk.start + chunk.duration,
+                                 desktop: chunk.desktopEnergy, mic: chunk.micEnergy))
+            entries.removeAll { $0.end < chunk.start - 60 }
+        }
+    }
+
+    func clear() { lock.withLock { entries = [] } }
+
+    func sums(start: TimeInterval, end: TimeInterval) -> (desktop: Float, mic: Float)? {
+        lock.withLock {
+            guard let first = entries.first, start >= first.start - 0.1 else { return nil }
+            var desktop: Float = 0, mic: Float = 0
+            for entry in entries where entry.start < end && entry.end > start {
+                desktop += entry.desktop
+                mic += entry.mic
+            }
+            return (desktop, mic)
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppleLiveTranscriber {
@@ -65,16 +99,9 @@ final class AppleLiveTranscriber {
     @ObservationIgnored private var continuation: AsyncStream<AnalyzerInput>.Continuation?
     @ObservationIgnored private var analysisTask: Task<Void, Never>?
     @ObservationIgnored private var resultTask: Task<Void, Never>?
-    @ObservationIgnored private var pumpTask: Task<Void, Never>?
+    @ObservationIgnored private var pump: StreamingInputPump?
     @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var energies: [StreamingEnergy] = []
-
-    private struct StreamingEnergy {
-        let start: TimeInterval
-        let end: TimeInterval
-        let desktop: Float
-        let mic: Float
-    }
+    private let energyLog = StreamingEnergyLog()
 
     func start(language: String) async throws {
         try Task.checkCancellation()
@@ -125,18 +152,25 @@ final class AppleLiveTranscriber {
                 self?.fail(error, generation: generation)
             }
         }
-        analysisTask = Task { [weak self] in
+        analysisTask = Task.detached { [weak self] in
             do { _ = try await analyzer.analyzeSequence(inputs) }
-            catch { self?.fail(error, generation: generation) }
+            catch { await self?.fail(error, generation: generation) }
         }
-        pumpTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(50)) }
-                catch { return }
-                guard let self, generation == self.generation else { return }
-                self.drain(flush: false, generation: generation)
+        let energyLog = energyLog
+        let pump = StreamingInputPump(
+            inbox: inbox,
+            deliver: { chunk in
+                energyLog.record(chunk)
+                guard case .enqueued = continuation.yield(AnalyzerInput(buffer: chunk.buffer, bufferStartTime: chunk.startTime)) else {
+                    throw StreamingSpeechError.inputOverrun
+                }
+            },
+            onFailure: { [weak self] error in
+                Task { @MainActor in self?.fail(error, generation: generation) }
             }
-        }
+        )
+        self.pump = pump
+        pump.start()
     }
 
     func endSession() async -> SessionResult {
@@ -145,9 +179,8 @@ final class AppleLiveTranscriber {
         }
         let generation = self.generation
         inbox.end()
-        pumpTask?.cancel()
-        pumpTask = nil
-        drain(flush: true, generation: generation)
+        if let error = pump?.finish() { fail(error, generation: generation) }
+        pump = nil
         inbox.discard()
         continuation?.finish()
         continuation = nil
@@ -168,7 +201,7 @@ final class AppleLiveTranscriber {
         self.analyzer = nil
         analysisTask = nil
         resultTask = nil
-        energies = []
+        energyLog.clear()
         isSessionActive = false
         return SessionResult(lines: confirmedLines, complete: failureMessage == nil)
     }
@@ -178,17 +211,17 @@ final class AppleLiveTranscriber {
     func cancelSession() {
         generation += 1
         inbox.discard()
-        pumpTask?.cancel()
+        pump?.stop()
         analysisTask?.cancel()
         resultTask?.cancel()
         continuation?.finish()
         continuation = nil
         if let analyzer { Task { await analyzer.cancelAndFinishNow() } }
         analyzer = nil
-        pumpTask = nil
+        pump = nil
         analysisTask = nil
         resultTask = nil
-        energies = []
+        energyLog.clear()
         isSessionActive = false
         failureMessage = nil
         text = StreamingTranscript()
@@ -200,39 +233,17 @@ final class AppleLiveTranscriber {
             .joined(separator: "\n\n")
     }
 
-    private func drain(flush: Bool, generation: Int) {
-        guard failureMessage == nil, let continuation else { return }
-        do {
-            while let chunk = try inbox.drain(flush: flush) {
-                energies.append(StreamingEnergy(start: chunk.start, end: chunk.start + chunk.duration,
-                                               desktop: chunk.desktopEnergy, mic: chunk.micEnergy))
-                energies.removeAll { $0.end < chunk.start - 60 }
-                let input = AnalyzerInput(buffer: chunk.buffer, bufferStartTime: chunk.startTime)
-                switch continuation.yield(input) {
-                case .enqueued: break
-                case .dropped, .terminated: throw StreamingSpeechError.inputOverrun
-                @unknown default: throw StreamingSpeechError.inputOverrun
-                }
-            }
-        } catch { fail(error, generation: generation) }
-    }
-
     private func fail(_ error: Error, generation: Int) {
         guard generation == self.generation, failureMessage == nil else { return }
         failureMessage = error.localizedDescription
         inbox.discard()
         continuation?.finish()
-        pumpTask?.cancel()
+        pump?.stop()
         onFailure?()
     }
 
     private func speaker(start: TimeInterval, end: TimeInterval) -> String? {
-        guard labelSpeakers, let first = energies.first, start >= first.start - 0.1 else { return nil }
-        var desktop: Float = 0, mic: Float = 0
-        for energy in energies where energy.start < end && energy.end > start {
-            desktop += energy.desktop
-            mic += energy.mic
-        }
+        guard labelSpeakers, let (desktop, mic) = energyLog.sums(start: start, end: end) else { return nil }
         guard max(desktop, mic) > 0.0001 else { return nil }
         if mic > desktop * 4 { return "You" }
         if desktop > mic * 4 { return "Them" }
