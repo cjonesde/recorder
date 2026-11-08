@@ -18,12 +18,16 @@ struct TokenLineSegmenter {
         var text: String
         let start: Double
         var end: Double
+        var lastToken: Int
     }
 
     private(set) var confirmedThrough: Double = 0
+    private(set) var boundaryStart: Double = 0
+    private var consumedAtBoundary = 0
 
     mutating func confirm(_ tokens: [Token]) -> [Line] {
-        let words = pendingWords(tokens)
+        let pending = pendingTokens(tokens)
+        let words = Self.words(pending)
         guard let last = words.indices.last(where: { Self.endsLine(words, at: $0) }) else { return [] }
         var lines: [Line] = []
         var first = 0
@@ -31,44 +35,65 @@ struct TokenLineSegmenter {
             lines.append(Self.line(words[first...index]))
             first = index + 1
         }
-        confirmedThrough = words[last].end
+        advance(through: words[last].lastToken, of: pending)
         return lines
     }
 
     mutating func finish(_ tokens: [Token]) -> [Line] {
         var lines = confirm(tokens)
-        let words = pendingWords(tokens)
+        let pending = pendingTokens(tokens)
+        let words = Self.words(pending)
         if let last = words.last {
             lines.append(Self.line(words[...]))
-            confirmedThrough = last.end
+            advance(through: last.lastToken, of: pending)
         }
         return lines
     }
 
     func tail(_ tokens: [Token]) -> String {
-        pendingWords(tokens).map(\.text).joined(separator: " ")
+        Self.words(pendingTokens(tokens)).map(\.text).joined(separator: " ")
     }
 
     func tailLine(_ tokens: [Token]) -> Line? {
-        let words = pendingWords(tokens)
+        let words = Self.words(pendingTokens(tokens))
         return words.isEmpty ? nil : Self.line(words[...])
     }
 
-    private func pendingWords(_ tokens: [Token]) -> [Word] {
-        Self.words(tokens.filter { $0.start >= confirmedThrough - Self.tolerance })
+    private func pendingTokens(_ tokens: [Token]) -> [Token] {
+        var seenAtBoundary = 0
+        return tokens.filter { token in
+            if abs(token.start - boundaryStart) < Self.tolerance {
+                seenAtBoundary += 1
+                return seenAtBoundary > consumedAtBoundary
+            }
+            return token.start >= confirmedThrough - Self.tolerance
+        }
+    }
+
+    private mutating func advance(through index: Int, of pending: [Token]) {
+        let token = pending[index]
+        let consumedHere = pending[...index].filter { abs($0.start - token.start) < Self.tolerance }.count
+        if abs(token.start - boundaryStart) < Self.tolerance {
+            consumedAtBoundary += consumedHere
+        } else {
+            boundaryStart = token.start
+            consumedAtBoundary = consumedHere
+        }
+        confirmedThrough = token.end
     }
 
     private static func words(_ tokens: [Token]) -> [Word] {
         let pieces = tokens.contains { $0.text.hasPrefix(wordMarker) }
         var words: [Word] = []
-        for token in tokens {
+        for (index, token) in tokens.enumerated() {
             let text = token.text.replacingOccurrences(of: wordMarker, with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !pieces || token.text.hasPrefix(wordMarker) || words.isEmpty {
-                words.append(Word(text: text, start: token.start, end: token.end))
+                words.append(Word(text: text, start: token.start, end: token.end, lastToken: index))
             } else {
                 words[words.count - 1].text += text
                 words[words.count - 1].end = token.end
+                words[words.count - 1].lastToken = index
             }
         }
         return words.filter { !$0.text.isEmpty }

@@ -260,11 +260,11 @@ final class NemotronLiveEngine: LiveSpeechEngine {
             }
             return Finalization(timings: await manager.getTokenTimings(), finished: false, error: nil)
         }
-        let outcome = await Self.value(of: work, within: finalizationTimeout)
         let teardown = enqueueManagerWork {
             _ = await work.value
             await manager.reset()
         }
+        let outcome = await Self.value(of: work, within: finalizationTimeout)
         guard generation == self.generation else { return LiveSessionResult(lines: [], complete: false, stopReason: nil) }
         if let outcome {
             if let error = outcome.error { fail(error, generation: generation) }
@@ -370,7 +370,7 @@ final class NemotronLiveEngine: LiveSpeechEngine {
     }
 
     private func pendingTokens(_ timings: [TokenTiming]) -> [TokenLineSegmenter.Token] {
-        let from = segmenter.confirmedThrough - 1e-6
+        let from = segmenter.boundaryStart - 1e-6
         return timings.lazy.filter { $0.startTime >= from }
             .map { TokenLineSegmenter.Token(text: $0.token, start: $0.startTime, end: $0.endTime) }
     }

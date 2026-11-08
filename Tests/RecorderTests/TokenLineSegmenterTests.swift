@@ -74,4 +74,23 @@ final class TokenLineSegmenterTests: XCTestCase {
         XCTAssertEqual(rest.first?.end, 1.0)
         XCTAssertEqual(s.tail(tokens), "")
     }
+
+    func testKeepsSameFrameWordsAfterASentenceEnd() {
+        var s = TokenLineSegmenter()
+        let tokens = [t("▁Hello", 0.72, 0.80), t(".", 0.80, 0.88), t("▁How", 0.80, 0.88), t("▁are", 0.88, 0.96)]
+        XCTAssertEqual(s.confirm(tokens).map(\.text), ["Hello."])
+        XCTAssertEqual(s.tail(tokens), "How are")
+        let more = tokens + [t("▁you", 0.96, 1.04), t("?", 1.04, 1.12)]
+        XCTAssertEqual(s.confirm(more).map(\.text), ["How are you?"])
+        XCTAssertEqual(s.tail(more), "")
+    }
+
+    func testSameFrameTokensSplitAcrossConfirmsAreCountedTogether() {
+        var s = TokenLineSegmenter()
+        let first = [t("▁Ja", 0.80, 0.88), t(".", 0.80, 0.88)]
+        XCTAssertEqual(s.confirm(first).map(\.text), ["Ja."])
+        let second = first + [t("▁Gut", 0.80, 0.88), t(".", 0.80, 0.88), t("▁Und", 0.80, 0.88)]
+        XCTAssertEqual(s.confirm(second).map(\.text), ["Gut."])
+        XCTAssertEqual(s.tail(second), "Und")
+    }
 }
