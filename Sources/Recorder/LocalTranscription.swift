@@ -79,7 +79,7 @@ final class LocalTranscriptionEngine {
         switch kind {
         case .apple: return AppleLiveTranscriber()
         case .nemotron: return NemotronLiveEngine()
-        case .parakeet: return UnavailableLiveEngine(kind: kind)
+        case .parakeet: return ParakeetLiveEngine()
         }
     }
 

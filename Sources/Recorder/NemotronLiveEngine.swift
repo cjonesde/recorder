@@ -33,33 +33,6 @@ private final class NemotronFeedMeter: @unchecked Sendable {
     }
 }
 
-private final class FirstResult<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<T?, Never>?
-    private var timer: Task<Void, Never>?
-
-    func arm(_ continuation: CheckedContinuation<T?, Never>, work: Task<T, Never>, timeout: Duration) {
-        lock.withLock { self.continuation = continuation }
-        let timer = Task.detached { [self] in
-            try? await Task.sleep(for: timeout)
-            resume(nil)
-        }
-        lock.withLock { self.timer = timer }
-        Task.detached { [self] in resume(await work.value) }
-    }
-
-    private func resume(_ value: T?) {
-        let pending: (CheckedContinuation<T?, Never>, Task<Void, Never>?)? = lock.withLock {
-            guard let continuation else { return nil }
-            self.continuation = nil
-            return (continuation, timer)
-        }
-        guard let pending else { return }
-        if value != nil { pending.1?.cancel() }
-        pending.0.resume(returning: value)
-    }
-}
-
 @MainActor
 @Observable
 final class NemotronLiveEngine: LiveSpeechEngine {
@@ -78,14 +51,7 @@ final class NemotronLiveEngine: LiveSpeechEngine {
         let error: LiveStopError?
     }
 
-    nonisolated static var modelsDirectory: URL {
-        let root = (try? FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-        )) ?? FileManager.default.homeDirectoryForCurrentUser
-        return root
-            .appendingPathComponent("Recorder", isDirectory: true)
-            .appendingPathComponent("SpeechModels", isDirectory: true)
-    }
+    nonisolated static var modelsDirectory: URL { FluidEngineSupport.modelsDirectory }
 
     nonisolated static func variantDirectory(language: String, root: URL = modelsDirectory) -> URL {
         root.appendingPathComponent("nemotron-multilingual", isDirectory: true)
@@ -167,10 +133,8 @@ final class NemotronLiveEngine: LiveSpeechEngine {
             manager = loaded
             loadedVariant = variant
         }
-        let elapsed = clock.now - began
-        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-        return PreparationInfo(loadSeconds: seconds, firstLoad: firstLoad,
-                               modelBytesOnDisk: Self.bytesOnDisk(variant), computeUnits: Self.computeUnitsLabel)
+        return PreparationInfo(loadSeconds: FluidEngineSupport.seconds(clock.now - began), firstLoad: firstLoad,
+                               modelBytesOnDisk: FluidEngineSupport.bytesOnDisk(variant), computeUnits: Self.computeUnitsLabel)
     }
 
     func startSession() throws {
@@ -264,7 +228,7 @@ final class NemotronLiveEngine: LiveSpeechEngine {
             _ = await work.value
             await manager.reset()
         }
-        let outcome = await Self.value(of: work, within: finalizationTimeout)
+        let outcome = await FluidEngineSupport.value(of: work, within: finalizationTimeout)
         guard generation == self.generation else { return LiveSessionResult(lines: [], complete: false, stopReason: nil) }
         if let outcome {
             if let error = outcome.error { fail(error, generation: generation) }
@@ -399,23 +363,5 @@ final class NemotronLiveEngine: LiveSpeechEngine {
         }
         managerWork = task
         return task
-    }
-
-    nonisolated private static func value<T: Sendable>(of work: Task<T, Never>, within timeout: Duration) async -> T? {
-        let gate = FirstResult<T>()
-        return await withCheckedContinuation { continuation in
-            gate.arm(continuation, work: work, timeout: timeout)
-        }
-    }
-
-    nonisolated private static func bytesOnDisk(_ directory: URL) -> Int64? {
-        guard let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.fileSizeKey]) else {
-            return nil
-        }
-        var total: Int64 = 0
-        for case let file as URL in files {
-            total += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        }
-        return total
     }
 }

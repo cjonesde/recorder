@@ -32,6 +32,8 @@ struct StreamingTranscript {
         }
     }
 
+    mutating func clearProvisional() { provisional = [] }
+
     mutating func markIncomplete(_ reason: String) {
         for part in provisional.sorted(by: { $0.start < $1.start }) {
             lines.append(TranscriptLine(time: part.start, text: "[unconfirmed] \(part.text)", speaker: nil))

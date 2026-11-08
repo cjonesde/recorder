@@ -249,17 +249,46 @@ final class LiveEngineSelectionTests: XCTestCase {
     }
 
     @MainActor
-    func testPlaceholderEnginesRefuseToPrepareWithTheirName() async {
-        for kind in [LiveEngineKind.parakeet] {
-            let engine = LocalTranscriptionEngine.defaultFactory(kind)
-            XCTAssertEqual(engine.kind, kind)
-            do {
-                _ = try await engine.prepare(language: "en-US", progress: { _ in })
-                XCTFail("\(kind) prepared")
-            } catch {
-                XCTAssertTrue(error.localizedDescription.contains(kind.label), error.localizedDescription)
-            }
-        }
+    func testParakeetNamesItselfAndEstimatesHeldAudioWithoutLoading() {
+        let engine = LocalTranscriptionEngine.defaultFactory(.parakeet)
+        XCTAssertTrue(engine is ParakeetLiveEngine)
+        XCTAssertEqual(engine.kind, .parakeet)
+        XCTAssertEqual(engine.displayName, "Parakeet Ultra")
+        XCTAssertEqual(engine.finalizationTimeout, .seconds(30))
+        XCTAssertFalse(engine.isLoaded)
+        XCTAssertThrowsError(try engine.startSession())
+        let diagnostics = engine.diagnostics()
+        XCTAssertEqual(diagnostics.heldAudioQuality, .estimated)
+        XCTAssertEqual(diagnostics.heldAudioSeconds, 0)
+        XCTAssertTrue(diagnostics.rows.contains(DiagnosticRow(label: "Window", value: "11 s + 2 s + 2 s", quality: .measured)))
+        XCTAssertTrue(diagnostics.rows.contains { $0.label == "Last window decode" })
+        XCTAssertTrue(diagnostics.rows.contains { $0.label == "Handoff peak" && $0.quality == .measured })
+        engine.captureFailed(LiveStopError(reason: .desktopRingOverflow, detail: nil))
+        XCTAssertEqual(engine.stopReason, .desktopRingOverflow)
+    }
+
+    @MainActor
+    func testParakeetModelsLiveUnderRecorderSpeechModels() {
+        XCTAssertTrue(ParakeetLiveEngine.modelDirectory.path.hasSuffix("Application Support/Recorder/SpeechModels/parakeet-ultra"),
+                      ParakeetLiveEngine.modelDirectory.path)
+    }
+
+    func testParakeetFeedGateHoldsBackOnlyWhileAWindowDecodes() {
+        let gate = ParakeetFeedGate()
+        XCTAssertEqual(gate.queuedSeconds, 0)
+        gate.add(Int(15 * ParakeetLiveEngine.sampleRate), at: Date())
+        XCTAssertEqual(gate.queuedSeconds, 2, accuracy: 1e-9)
+        XCTAssertTrue(gate.hasRoom)
+        gate.add(Int(1 * ParakeetLiveEngine.sampleRate), at: Date())
+        XCTAssertFalse(gate.hasRoom)
+        gate.windowCompleted(at: Date())
+        XCTAssertEqual(gate.queuedSeconds, 0)
+        XCTAssertTrue(gate.hasRoom)
+        XCTAssertNotNil(gate.lastDecode)
+    }
+
+    func testFinalizationTimeoutMessageDoesNotNameAFixedWait() {
+        XCTAssertFalse(LiveStopReason.finalizationTimedOut.message.contains("10 s"))
     }
 
     func testStreamingTranscriptExposesProvisionalAndFinalEnds() {

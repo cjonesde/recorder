@@ -19,7 +19,7 @@ enum LiveStopReason: String, Codable, Sendable, CaseIterable {
         case .engineFellBehind: return "The speech engine fell too far behind the audio."
         case .desktopRingOverflow: return "Desktop audio capture overflowed before it could be processed."
         case .engineError: return "The speech engine reported an error."
-        case .finalizationTimedOut: return "The speech engine did not finish within 10 s after stopping."
+        case .finalizationTimedOut: return "Finishing the transcript took too long."
         }
     }
 }
