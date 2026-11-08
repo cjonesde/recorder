@@ -30,8 +30,10 @@ class FakeLiveEngine: LiveSpeechEngine {
 
     init(kind: LiveEngineKind, prepareError: Error? = nil, prepareDelay: Duration? = nil,
          startSessionError: Error? = nil, unloadDelay: Duration? = nil,
-         endSessionDelay: Duration? = nil, endSessionStopReason: LiveStopReason? = nil) {
+         endSessionDelay: Duration? = nil, endSessionStopReason: LiveStopReason? = nil,
+         lines: [TranscriptLine] = []) {
         self.kind = kind
+        self.confirmedLines = lines
         self.prepareError = prepareError
         self.prepareDelay = prepareDelay
         self.startSessionError = startSessionError

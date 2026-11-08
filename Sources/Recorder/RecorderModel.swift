@@ -489,17 +489,18 @@ final class RecorderModel {
         // parallel with the mix. Only awaited when a transcript will actually
         // be written, so an off toggle or a slow model never delays the save.
         let diagnostics = self.diagnostics
+        let reportLanguage = transcriptionLanguage
         let liveTask: Task<LiveSessionResult, Never>? = live.isSessionActive
             ? Task { [live, weak self] in
                 let finalizingSince = ProcessInfo.processInfo.systemUptime
                 let result = await live.endSession()
                 if let reason = result.stopReason { diagnostics?.recordStop(reason) }
                 diagnostics?.record("finalized", detail: String(format: "%.2f s", ProcessInfo.processInfo.systemUptime - finalizingSince))
-                self?.finishDiagnostics(diagnostics)
+                self?.finishDiagnostics(diagnostics, folder: folderURL, language: reportLanguage)
                 return result
             }
             : nil
-        if liveTask == nil { finishDiagnostics(diagnostics) }
+        if liveTask == nil { finishDiagnostics(diagnostics, folder: folderURL, language: reportLanguage) }
 
         // No audio was ever written, so there is nothing to mix and nothing to polish.
         guard mode.retainsAudio,
@@ -522,6 +523,7 @@ final class RecorderModel {
                 guard let liveResult = await liveTask?.value, !liveResult.isEmpty else {
                     self.transcriptionState = .failed("Nothing was transcribed, and no audio was kept.")
                     self.statusMessage = "Nothing to save"
+                    if diagnostics == nil { Self.removeFolderIfEmpty(folderURL) }
                     self.refreshRecordings()
                     return
                 }
@@ -713,10 +715,20 @@ final class RecorderModel {
         diagnostics.sample(engine: live.engine.diagnostics(), stall: stall, folder: diagnosticsFolder)
     }
 
-    private func finishDiagnostics(_ recorder: DiagnosticsRecorder?) {
+    private func finishDiagnostics(_ recorder: DiagnosticsRecorder?, folder: URL, language: String?) {
         guard let recorder, diagnostics === recorder else { return }
         sampleDiagnostics()
         stopDiagnosticsSampling()
+        do {
+            try recorder.report(language: language).write(to: folder)
+        } catch {
+            recorder.record("debug report failed", detail: error.localizedDescription)
+        }
+    }
+
+    private static func removeFolderIfEmpty(_ folder: URL) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        if names.isEmpty { try? FileManager.default.removeItem(at: folder) }
     }
 
     private func stopDiagnosticsSampling() {
