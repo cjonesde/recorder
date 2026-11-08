@@ -8,6 +8,10 @@ better accuracy and retained raw audio longer than the intended design allows.
 
 ## Product behavior
 
+This document covers the Apple engine. Nemotron and Parakeet are selectable alternatives,
+and the debug drawer and `debug.json` are described with them in
+[live-engines.md](live-engines.md). The language picker below applies only to Apple.
+
 - Apple streaming handles live recognition in all three audio-handling modes.
 - Transcript-only is the default for new installations. Persisted recording modes are
   preserved, so existing users must select transcript-only if they previously kept audio.

@@ -13,11 +13,38 @@ only** in the panel if you previously kept audio.
 
 ## Live transcription
 
-Live speech uses Apple's `SpeechAnalyzer` / `SpeechTranscriber`. Choose German,
-English, French, Spanish, or Italian before recording. The selected locale stays fixed
-for that recording; automatic language switching is not supported. Old language choices
+Three live engines are available. Pick one in the panel or in Settings under **Live
+engine** before recording; the choice is remembered and fixed for that recording.
+
+| Engine | Notes |
+| --- | --- |
+| Apple (default) | `SpeechAnalyzer` / `SpeechTranscriber`. Needs a language choice. Recognition runs in Apple's speech service process (`localspeechrecognition`), outside Recorder. |
+| Nemotron | FluidAudio multilingual streaming model. Detects the language itself. |
+| Parakeet | FluidAudio sliding-window model. Shows no text for the first 13 s of a recording, and its newest words arrive 11 to 13 s late by design. |
+
+The language picker (German, English, French, Spanish, Italian) applies only to the
+Apple engine; Nemotron and Parakeet hide it. The selected locale stays fixed for that
+recording; automatic language switching is not supported for Apple. Old language choices
 migrate to the matching locale. A former Auto choice resolves to a supported system
 language, or English, and is shown in the picker.
+
+Nemotron and Parakeet hold audio inside the library that the app cannot erase. Steady
+state is about 25 s for Nemotron with recovery on and about 26 s for Parakeet, and decode
+passes add transient copies of up to about 16 s (Nemotron recovery) and about 30 s
+(Parakeet window). The samples are freed, not zeroed. Details and sources are in
+[docs/live-engines.md](docs/live-engines.md).
+
+In the polish mode the resident live engine is unloaded before Whisper loads, and the
+next recording loads it again.
+
+### Debug view
+
+Turn on **Show debug info** in Settings to get a debug drawer in the panel. It shows
+memory, swap, text lag and held audio while recording, and can be popped out into its own
+window. While it is on, each recording also writes `debug.json` beside the transcript. The
+file records timing, memory and engine events, never audio or transcript text. Held audio
+for Nemotron and Parakeet is an estimate from the engine configuration, and erasure is not
+guaranteed.
 
 On first use, macOS may download language assets. The app finishes preparation before
 opening either capture source. Cancel is available during preparation. Words initially
@@ -87,7 +114,8 @@ Hardware capture and real model tests are opt-in. See the complete
 [investigation and benchmark results](docs/transcription-performance.md), including
 model comparisons, source links, audio-lifetime limits, raw JSON results, and reproduction
 commands. The [Apple streaming implementation](docs/apple-streaming.md) documents the
-session lifecycle, memory ownership, error behavior, and verification gaps.
+session lifecycle, memory ownership, error behavior, and verification gaps. The
+[live engine audit](docs/live-engines.md) covers Nemotron and Parakeet.
 
 The older [capture research](docs/research-notes.md) is retained as historical context;
 its transcription and default-retention descriptions have been superseded.
@@ -97,10 +125,11 @@ its transcription and default-retention descriptions have been superseded.
 | Component | Responsibility |
 | --- | --- |
 | `RecorderModel` | Capture preparation, session lifecycle, preferences and saving |
-| `AppleLiveTranscriber` | Native recognizer, provisional/final text, bounded submission |
+| `AppleLiveTranscriber`, `NemotronLiveEngine`, `ParakeetLiveEngine` | Live engines behind `LiveSpeechEngine`: provisional/final text, bounded submission |
 | `StreamingAudioInput` | Bounded channel handoff, resampling, mixing and PCM erasure |
 | `SystemAudioTap`, `MicCapture` | Desktop and microphone capture; optional file writes |
-| `LocalTranscriptionEngine` | Apple live surface and optional saved-file Whisper/SpeakerKit |
+| `LocalTranscriptionEngine` | Resident live engine selection and optional saved-file Whisper/SpeakerKit |
+| `DiagnosticsRecorder`, `DebugReport` | Debug drawer data and `debug.json` |
 | `StereoMixer` | Align and combine retained channel files |
 | `TranscriptDocument` | JSON source document and rendered Markdown |
 | `Tests/RecorderTests/LegacyWhisper` | Previous live pipeline retained only for regression benchmarks |

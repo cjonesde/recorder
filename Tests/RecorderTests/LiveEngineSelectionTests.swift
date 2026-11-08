@@ -351,4 +351,44 @@ final class LiveEngineSelectionTests: XCTestCase {
         XCTAssertEqual(text.finalEnd, 1)
         XCTAssertEqual(text.latestProvisionalEnd, 1.5)
     }
+
+    @MainActor func testPolishPassUnloadsTheLiveEngineBeforeWhisperLoads() async throws {
+        let environmentPath = ProcessInfo.processInfo.environment["RECORDER_TEST_AUDIO_JFK"]
+        let path = environmentPath ?? "/Users/christopherjones/projects/cjonesde/recorder/Tools/ASRBenchmark/fixtures/jfk.wav"
+        guard FileManager.default.fileExists(atPath: path) else { throw XCTSkip("jfk.wav fixture not found") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("polish-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let audio = folder.appendingPathComponent("audio.wav")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: path), to: audio)
+
+        let fake = FakeLiveEngine(kind: .apple)
+        var unloadsSeenByWhisperLoad: [Int] = []
+        let model = RecorderModel(
+            engineFactory: { _ in fake },
+            whisperLoader: { _ in unloadsSeenByWhisperLoad.append(fake.unloadCalls) }
+        )
+        _ = try await fake.prepare(language: "en-US", progress: { _ in })
+        XCTAssertTrue(fake.isLoaded)
+
+        model.transcribeExisting(RecordingEntry(
+            folderURL: folder, title: nil, date: Date(), audioURL: audio, transcriptURL: nil, documentURL: nil
+        ))
+        for _ in 0..<200 where unloadsSeenByWhisperLoad.isEmpty {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        XCTAssertEqual(unloadsSeenByWhisperLoad, [1])
+        XCTAssertEqual(fake.unloadCalls, 1)
+        XCTAssertFalse(fake.isLoaded)
+    }
+
+    @MainActor func testPolishPassKeepsTheLiveEngineWhileASessionIsActive() async throws {
+        let fake = FakeLiveEngine(kind: .apple)
+        let model = RecorderModel(engineFactory: { _ in fake }, whisperLoader: { _ in })
+        try await model.live.beginSession(language: "en-US")
+        XCTAssertTrue(model.live.isSessionActive)
+        await model.unloadLiveEngineForPolish()
+        XCTAssertEqual(fake.unloadCalls, 0)
+    }
 }

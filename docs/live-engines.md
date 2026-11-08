@@ -314,7 +314,9 @@ decode.
 
 ## Constraint: audio held by FluidAudio engines
 
-Nemotron and Parakeet hold up to roughly 25 to 35 s of audio in memory, the app cannot
+Nemotron and Parakeet hold about 25 to 26 s of audio in memory in steady state, with
+transient peaks above that (about 41 s for a Nemotron recovery decode, about 56 s for a
+Parakeet window decode, counting the transient copies listed below), the app cannot
 erase their copies, and their text may lag up to 10 s before the recording stops with
 "engine fell more than 10 s behind".
 
@@ -352,3 +354,14 @@ footprint, and it is only read when Apple is the selected engine.
 Memory pressure comes from `sysctl kern.memorystatus_vm_pressure_level`: 1 is normal, 2 is
 warning, 4 is critical. Other values map to the nearest level: below 2 is normal, 2 and 3
 are warning, 4 and above are critical.
+
+## Polish mode and the debug view
+
+In the polish mode (keep audio, then run Whisper) the resident live engine is unloaded
+before Whisper loads, so the two never hold models at once. The debug event is "live
+engine unloaded for polish". The next recording loads the engine again from its cache.
+The transcript records the live engine that ran as `liveEngine`.
+
+The debug toggle (Settings, **Show debug info**) adds a drawer to the panel, a pop-out
+window, and a `debug.json` beside each transcript. None of them contain audio or
+transcript text.
