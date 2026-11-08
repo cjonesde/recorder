@@ -31,6 +31,7 @@ final class FloatRingBuffer: @unchecked Sendable {
     }
 
     deinit {
+        AudioMemory.erase(storage, count: capacity)
         storage.deinitialize(count: capacity)
         storage.deallocate()
     }
@@ -75,8 +76,10 @@ final class FloatRingBuffer: @unchecked Sendable {
         let start = r % capacity
         let first = min(count, capacity - start)
         memcpy(dst, storage + start, first * MemoryLayout<Float>.stride)
+        AudioMemory.erase(storage + start, count: first)
         if first < count {
             memcpy(dst + first, storage, (count - first) * MemoryLayout<Float>.stride)
+            AudioMemory.erase(storage, count: count - first)
         }
         readIndex.store(r + count, ordering: .releasing)
         return count

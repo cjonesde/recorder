@@ -1,0 +1,737 @@
+{
+  "audioSeconds" : 52.42,
+  "backend" : "apple",
+  "droppedChunks" : 0,
+  "events" : [
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "Für",
+      "wallSeconds" : 4.932926374996896
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Für die",
+      "wallSeconds" : 5.9394674166615005
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Für die besten",
+      "wallSeconds" : 5.945342041661206
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Für die besten A",
+      "wallSeconds" : 5.953563708331785
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Für die besten Auss",
+      "wallSeconds" : 5.955910791664792
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten",
+      "wallSeconds" : 6.842071374994703
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf",
+      "wallSeconds" : 6.8465047083300306
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf H",
+      "wallSeconds" : 6.849835000000894
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hong",
+      "wallSeconds" : 6.851571041661373
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongk",
+      "wallSeconds" : 7.852087916660821
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong",
+      "wallSeconds" : 7.858388458327681
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten",
+      "wallSeconds" : 7.866879249995691
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten Sie",
+      "wallSeconds" : 8.852735374995973
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten Sie die",
+      "wallSeconds" : 8.854846958332928
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten Sie die Insel",
+      "wallSeconds" : 8.85795225000038
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen",
+      "wallSeconds" : 9.753737250000995
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und",
+      "wallSeconds" : 10.730045374999463
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum",
+      "wallSeconds" : 10.733583624998573
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüber",
+      "wallSeconds" : 10.73755262499617
+    },
+    {
+      "audioThroughSeconds" : 11.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegen",
+      "wallSeconds" : 11.634957499998563
+    },
+    {
+      "audioThroughSeconds" : 11.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden",
+      "wallSeconds" : 11.63795079166448
+    },
+    {
+      "audioThroughSeconds" : 11.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden U",
+      "wallSeconds" : 11.641878791662748
+    },
+    {
+      "audioThroughSeconds" : 12.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden Ufer",
+      "wallSeconds" : 12.632084749995556
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden Ufer von",
+      "wallSeconds" : 13.650595125000109
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden Ufer von K",
+      "wallSeconds" : 13.65775437499542
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden Ufer von Kl",
+      "wallSeconds" : 13.662589458333969
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden Ufer von Klun",
+      "wallSeconds" : 13.665971708331199
+    },
+    {
+      "audioThroughSeconds" : 14.5,
+      "final" : false,
+      "text" : "Für die besten Aussichten auf Hongkong sollten sie die Insel verlassen und zum gegenüberliegenden Ufer von Klun fahren",
+      "wallSeconds" : 14.547171791666187
+    },
+    {
+      "audioThroughSeconds" : 14.34,
+      "final" : true,
+      "text" : "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Klun fahren",
+      "wallSeconds" : 14.674000291663106
+    },
+    {
+      "audioThroughSeconds" : 22.2,
+      "final" : false,
+      "text" : " Slow",
+      "wallSeconds" : 22.24325924999721
+    },
+    {
+      "audioThroughSeconds" : 22.2,
+      "final" : false,
+      "text" : " Slow c",
+      "wallSeconds" : 22.246033666662697
+    },
+    {
+      "audioThroughSeconds" : 22.2,
+      "final" : false,
+      "text" : " Slow comm",
+      "wallSeconds" : 22.247172833333025
+    },
+    {
+      "audioThroughSeconds" : 22.2,
+      "final" : false,
+      "text" : " Slow commun",
+      "wallSeconds" : 22.24865529166709
+    },
+    {
+      "audioThroughSeconds" : 23.2,
+      "final" : false,
+      "text" : " Slow communic",
+      "wallSeconds" : 23.232376333333377
+    },
+    {
+      "audioThroughSeconds" : 23.2,
+      "final" : false,
+      "text" : " Slow communication",
+      "wallSeconds" : 23.23420033333241
+    },
+    {
+      "audioThroughSeconds" : 23.2,
+      "final" : false,
+      "text" : " Slow communication Ch",
+      "wallSeconds" : 23.236497124999005
+    },
+    {
+      "audioThroughSeconds" : 24.1,
+      "final" : false,
+      "text" : " Slow communication Chels St",
+      "wallSeconds" : 24.13043154166371
+    },
+    {
+      "audioThroughSeconds" : 24.1,
+      "final" : false,
+      "text" : " Slow communication Chels Sty",
+      "wallSeconds" : 24.13217416666157
+    },
+    {
+      "audioThroughSeconds" : 24.1,
+      "final" : false,
+      "text" : " Slow communication Chels Styles",
+      "wallSeconds" : 24.133721166661417
+    },
+    {
+      "audioThroughSeconds" : 25.1,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in",
+      "wallSeconds" : 25.13502508332749
+    },
+    {
+      "audioThroughSeconds" : 25.1,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the",
+      "wallSeconds" : 25.137473666662117
+    },
+    {
+      "audioThroughSeconds" : 26,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the co",
+      "wallSeconds" : 26.022628791666648
+    },
+    {
+      "audioThroughSeconds" : 26,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could",
+      "wallSeconds" : 26.03045416666282
+    },
+    {
+      "audioThroughSeconds" : 26,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could l",
+      "wallSeconds" : 26.037253416667227
+    },
+    {
+      "audioThroughSeconds" : 26,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag",
+      "wallSeconds" : 26.04144924999855
+    },
+    {
+      "audioThroughSeconds" : 26,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag beh",
+      "wallSeconds" : 26.04687820833351
+    },
+    {
+      "audioThroughSeconds" : 27,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag behind",
+      "wallSeconds" : 27.03412958332774
+    },
+    {
+      "audioThroughSeconds" : 28,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag behindy 25",
+      "wallSeconds" : 28.036216666667315
+    },
+    {
+      "audioThroughSeconds" : 28,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag behindy 25 to",
+      "wallSeconds" : 28.045930499996757
+    },
+    {
+      "audioThroughSeconds" : 28,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag behindy 25 to y",
+      "wallSeconds" : 28.054260458331555
+    },
+    {
+      "audioThroughSeconds" : 28,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag behindy 25 to ye",
+      "wallSeconds" : 28.055900041661516
+    },
+    {
+      "audioThroughSeconds" : 28,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag behindy 25 to years",
+      "wallSeconds" : 28.05772320833057
+    },
+    {
+      "audioThroughSeconds" : 28.9,
+      "final" : false,
+      "text" : " Slow communication Chels Styles in the could lag behindy 25 to years.",
+      "wallSeconds" : 28.928004416666226
+    },
+    {
+      "audioThroughSeconds" : 29.58,
+      "final" : true,
+      "text" : " Slow communication Chels Styles in the could lag behind 25 to years.",
+      "wallSeconds" : 29.993367916664283
+    },
+    {
+      "audioThroughSeconds" : 33.7,
+      "final" : false,
+      "text" : " Er",
+      "wallSeconds" : 33.76687220833264
+    },
+    {
+      "audioThroughSeconds" : 33.7,
+      "final" : false,
+      "text" : " Er g",
+      "wallSeconds" : 33.77125629166403
+    },
+    {
+      "audioThroughSeconds" : 33.7,
+      "final" : false,
+      "text" : " Er griff",
+      "wallSeconds" : 33.77449558333319
+    },
+    {
+      "audioThroughSeconds" : 33.7,
+      "final" : false,
+      "text" : " Er griff auf",
+      "wallSeconds" : 33.77907233333099
+    },
+    {
+      "audioThroughSeconds" : 34.7,
+      "final" : false,
+      "text" : " Er griff auf alles",
+      "wallSeconds" : 34.740903249999974
+    },
+    {
+      "audioThroughSeconds" : 34.7,
+      "final" : false,
+      "text" : " Er griff auf alles an",
+      "wallSeconds" : 34.744840416664374
+    },
+    {
+      "audioThroughSeconds" : 34.7,
+      "final" : false,
+      "text" : " Er griff auf alles an,",
+      "wallSeconds" : 34.74796375000005
+    },
+    {
+      "audioThroughSeconds" : 35.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was",
+      "wallSeconds" : 35.63584441666171
+    },
+    {
+      "audioThroughSeconds" : 35.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins",
+      "wallSeconds" : 35.640359208329755
+    },
+    {
+      "audioThroughSeconds" : 35.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser",
+      "wallSeconds" : 35.64556529166293
+    },
+    {
+      "audioThroughSeconds" : 35.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam",
+      "wallSeconds" : 35.653002416664094
+    },
+    {
+      "audioThroughSeconds" : 36.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam,",
+      "wallSeconds" : 36.63033979166357
+    },
+    {
+      "audioThroughSeconds" : 36.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst",
+      "wallSeconds" : 36.63360545832984
+    },
+    {
+      "audioThroughSeconds" : 37.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein",
+      "wallSeconds" : 37.63542016666179
+    },
+    {
+      "audioThroughSeconds" : 37.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer",
+      "wallSeconds" : 37.639181083330186
+    },
+    {
+      "audioThroughSeconds" : 37.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer D",
+      "wallSeconds" : 37.641687999996066
+    },
+    {
+      "audioThroughSeconds" : 37.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Din",
+      "wallSeconds" : 37.643006083329965
+    },
+    {
+      "audioThroughSeconds" : 37.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinos",
+      "wallSeconds" : 37.64500762499665
+    },
+    {
+      "audioThroughSeconds" : 37.6,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaur",
+      "wallSeconds" : 37.64714575000107
+    },
+    {
+      "audioThroughSeconds" : 38.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie",
+      "wallSeconds" : 38.53575862499565
+    },
+    {
+      "audioThroughSeconds" : 38.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der",
+      "wallSeconds" : 38.54058237499703
+    },
+    {
+      "audioThroughSeconds" : 38.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T",
+      "wallSeconds" : 38.543353916662454
+    },
+    {
+      "audioThroughSeconds" : 38.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-",
+      "wallSeconds" : 38.54496645832842
+    },
+    {
+      "audioThroughSeconds" : 38.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-R",
+      "wallSeconds" : 38.54660499999591
+    },
+    {
+      "audioThroughSeconds" : 38.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Re",
+      "wallSeconds" : 38.54789712499769
+    },
+    {
+      "audioThroughSeconds" : 39.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war",
+      "wallSeconds" : 39.55174174999411
+    },
+    {
+      "audioThroughSeconds" : 39.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war ihm",
+      "wallSeconds" : 39.556988416661625
+    },
+    {
+      "audioThroughSeconds" : 39.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war ihm nicht",
+      "wallSeconds" : 39.55943479166308
+    },
+    {
+      "audioThroughSeconds" : 39.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gew",
+      "wallSeconds" : 39.56583274999866
+    },
+    {
+      "audioThroughSeconds" : 39.5,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gewachsen",
+      "wallSeconds" : 39.568280666666396
+    },
+    {
+      "audioThroughSeconds" : 41.4,
+      "final" : false,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gewachsen.",
+      "wallSeconds" : 41.43003074999433
+    },
+    {
+      "audioThroughSeconds" : 41.28,
+      "final" : true,
+      "text" : " Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gewachsen.",
+      "wallSeconds" : 42.45232987499912
+    },
+    {
+      "audioThroughSeconds" : 44.3,
+      "final" : false,
+      "text" : " All",
+      "wallSeconds" : 44.329487166665785
+    },
+    {
+      "audioThroughSeconds" : 44.3,
+      "final" : false,
+      "text" : " All n",
+      "wallSeconds" : 44.331316791663994
+    },
+    {
+      "audioThroughSeconds" : 45.2,
+      "final" : false,
+      "text" : " All nong",
+      "wallSeconds" : 45.22896879166365
+    },
+    {
+      "audioThroughSeconds" : 45.2,
+      "final" : false,
+      "text" : " All the",
+      "wallSeconds" : 45.23305045832967
+    },
+    {
+      "audioThroughSeconds" : 45.2,
+      "final" : false,
+      "text" : " All the wor",
+      "wallSeconds" : 45.23584516666597
+    },
+    {
+      "audioThroughSeconds" : 46.2,
+      "final" : false,
+      "text" : " All the world",
+      "wallSeconds" : 46.23542162499507
+    },
+    {
+      "audioThroughSeconds" : 46.2,
+      "final" : false,
+      "text" : " All the world sa",
+      "wallSeconds" : 46.23796108333045
+    },
+    {
+      "audioThroughSeconds" : 46.2,
+      "final" : false,
+      "text" : " All the world say",
+      "wallSeconds" : 46.23936541666626
+    },
+    {
+      "audioThroughSeconds" : 46.2,
+      "final" : false,
+      "text" : " All the world say for",
+      "wallSeconds" : 46.2432092083327
+    },
+    {
+      "audioThroughSeconds" : 47.2,
+      "final" : false,
+      "text" : " All the world say for you",
+      "wallSeconds" : 47.23108937499637
+    },
+    {
+      "audioThroughSeconds" : 47.2,
+      "final" : false,
+      "text" : " All the world say for you al",
+      "wallSeconds" : 47.23619545833208
+    },
+    {
+      "audioThroughSeconds" : 47.2,
+      "final" : false,
+      "text" : " All the world say for you alw",
+      "wallSeconds" : 47.238197624996246
+    },
+    {
+      "audioThroughSeconds" : 47.2,
+      "final" : false,
+      "text" : " All the world say for you alway",
+      "wallSeconds" : 47.23994420833333
+    },
+    {
+      "audioThroughSeconds" : 48.1,
+      "final" : false,
+      "text" : " All the world say for you always beg",
+      "wallSeconds" : 48.13004558333341
+    },
+    {
+      "audioThroughSeconds" : 48.1,
+      "final" : false,
+      "text" : " All the world say for you always begin",
+      "wallSeconds" : 48.13362549999874
+    },
+    {
+      "audioThroughSeconds" : 48.1,
+      "final" : false,
+      "text" : " All the world say for you always begin w",
+      "wallSeconds" : 48.13703162499587
+    },
+    {
+      "audioThroughSeconds" : 48.1,
+      "final" : false,
+      "text" : " All the world say for you always begin with",
+      "wallSeconds" : 48.139481250000244
+    },
+    {
+      "audioThroughSeconds" : 48.1,
+      "final" : false,
+      "text" : " All the world say for you always begin with a",
+      "wallSeconds" : 48.14338529166707
+    },
+    {
+      "audioThroughSeconds" : 48.1,
+      "final" : false,
+      "text" : " All the world say for you always begin with a c",
+      "wallSeconds" : 48.14695279166335
+    },
+    {
+      "audioThroughSeconds" : 49.1,
+      "final" : false,
+      "text" : " All the world say for you always begin with a cap",
+      "wallSeconds" : 49.13123162499687
+    },
+    {
+      "audioThroughSeconds" : 49.1,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital",
+      "wallSeconds" : 49.13314479166729
+    },
+    {
+      "audioThroughSeconds" : 49.1,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital le",
+      "wallSeconds" : 49.135686624998925
+    },
+    {
+      "audioThroughSeconds" : 49.1,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder",
+      "wallSeconds" : 49.13796095833095
+    },
+    {
+      "audioThroughSeconds" : 50,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder e",
+      "wallSeconds" : 50.038999166667054
+    },
+    {
+      "audioThroughSeconds" : 50,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even",
+      "wallSeconds" : 50.04600854166347
+    },
+    {
+      "audioThroughSeconds" : 50,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the",
+      "wallSeconds" : 50.0482908749982
+    },
+    {
+      "audioThroughSeconds" : 50,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the m",
+      "wallSeconds" : 50.05027383333072
+    },
+    {
+      "audioThroughSeconds" : 50,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the md",
+      "wallSeconds" : 50.05401016666292
+    },
+    {
+      "audioThroughSeconds" : 50,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the mdle",
+      "wallSeconds" : 50.05669595833024
+    },
+    {
+      "audioThroughSeconds" : 50,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the md of",
+      "wallSeconds" : 50.0603057499975
+    },
+    {
+      "audioThroughSeconds" : 51,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the md of a",
+      "wallSeconds" : 51.03692454166594
+    },
+    {
+      "audioThroughSeconds" : 51,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the md of aten",
+      "wallSeconds" : 51.04153637499985
+    },
+    {
+      "audioThroughSeconds" : 51,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the md of atence",
+      "wallSeconds" : 51.04542108333408
+    },
+    {
+      "audioThroughSeconds" : 52,
+      "final" : false,
+      "text" : " All the world say for you always begin with a capital leder even the md of atence.",
+      "wallSeconds" : 52.04807787499885
+    },
+    {
+      "audioThroughSeconds" : 52.08,
+      "final" : true,
+      "text" : " All the world say for you always begin with a capital leder even the mdle of atence.",
+      "wallSeconds" : 52.461655791667
+    }
+  ],
+  "finalText" : "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Klun fahren  Slow communication Chels Styles in the could lag behind 25 to years.  Er griff auf alles an, was ins Wasser kam, selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gewachsen.  All the world say for you always begin with a capital leder even the mdle of atence.",
+  "finishSeconds" : 0.06658883333147969,
+  "language" : "de-DE",
+  "loadSecondsIncludingDownload" : 0.14161924999643816
+}

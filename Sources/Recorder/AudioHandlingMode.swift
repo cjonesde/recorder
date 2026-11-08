@@ -12,7 +12,7 @@ enum AudioHandlingMode: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static let `default`: AudioHandlingMode = .keepAudioAndPolish
+    static let `default`: AudioHandlingMode = .transcriptOnly
 
     var label: String {
         switch self {

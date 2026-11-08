@@ -130,4 +130,29 @@ final class TranscriptDocumentTests: XCTestCase {
         XCTAssertFalse(doc.isPolished)
         XCTAssertTrue(doc.renderMarkdown().contains("[00:08] quiet"))
     }
+
+    func testOldTranscriptJSONWithoutLiveEngineStillLoads() throws {
+        let json = #"{"attendees":[],"isPolished":false,"lines":[],"model":"openai_whisper-base","speakerNames":{},"startedAt":"2026-08-20T10:00:00Z"}"#
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertNil(try TranscriptDocument.load(from: url).liveEngine)
+    }
+
+    func testLiveHeaderNamesTheEngineNotWhisperKit() {
+        let doc = TranscriptDocument(live: [], meetingTitle: nil, attendees: [], startedAt: .now,
+                                     audioName: nil, model: "Parakeet Ultra")
+        let md = doc.renderMarkdown()
+        XCTAssertTrue(md.contains("- **Engine:** Parakeet Ultra (on-device)"))
+        XCTAssertFalse(md.contains("WhisperKit"))
+    }
+
+    func testPolishedHeaderNamesWhisperAndTheLiveEngine() {
+        var doc = TranscriptDocument(live: [], meetingTitle: nil, attendees: [], startedAt: .now,
+                                     audioName: "audio.m4a", model: "openai_whisper-base")
+        doc.isPolished = true
+        doc.liveEngine = "Nemotron 3.5 streaming"
+        let md = doc.renderMarkdown()
+        XCTAssertTrue(md.contains("- **Model:** WhisperKit `openai_whisper-base` (on-device)"))
+        XCTAssertTrue(md.contains("- **Live engine:** Nemotron 3.5 streaming"))
+    }
 }

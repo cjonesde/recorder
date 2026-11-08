@@ -52,36 +52,79 @@ struct WhisperModelOption: Identifiable, Equatable {
     }
 }
 
-/// Selectable transcription languages. "auto" detects the language per window,
-/// which handles mixed German/English meetings.
 enum TranscriptionLanguage {
     static let options: [(id: String, label: String)] = [
-        ("auto", "Auto-detect"),
-        ("de", "German"),
-        ("en", "English"),
-        ("fr", "French"),
-        ("es", "Spanish"),
-        ("it", "Italian"),
+        ("de-DE", "German"), ("en-US", "English"), ("fr-FR", "French"),
+        ("es-ES", "Spanish"), ("it-IT", "Italian")
     ]
+
+    static func selection(for stored: String, preferred: String = Locale.preferredLanguages.first ?? "en") -> String {
+        let code = stored.isEmpty || stored == "auto" ? preferred : stored
+        return options.first { $0.id.prefix(2) == code.prefix(2) }?.id ?? "en-US"
+    }
+
+    static func label(for id: String) -> String { options.first { $0.id == id }?.label ?? id }
 }
 
 // MARK: - LocalTranscriptionEngine
 
-/// On-device transcription via WhisperKit (CoreML Whisper on Apple Silicon).
-///
-/// Owns the model host, the live streaming transcriber, and the offline path that runs
-/// a saved `audio.m4a` through the same model with on-device diarization.
+/// Apple handles live speech; WhisperKit and SpeakerKit handle retained audio files.
 @MainActor
 @Observable
 final class LocalTranscriptionEngine {
 
-    let host: WhisperModelHost
-    let live: LiveTranscriber
+    typealias EngineFactory = @MainActor @Sendable (LiveEngineKind) -> any LiveSpeechEngine
 
-    init() {
+    nonisolated static let defaultFactory: EngineFactory = { kind in
+        switch kind {
+        case .apple: return AppleLiveTranscriber()
+        case .nemotron: return NemotronLiveEngine()
+        case .parakeet: return ParakeetLiveEngine()
+        }
+    }
+
+    let host: WhisperModelHost
+    private(set) var engine: any LiveSpeechEngine
+    private(set) var lastPreparation: PreparationInfo?
+    nonisolated let router = LiveInboxRouter()
+    @ObservationIgnored private let factory: EngineFactory
+    @ObservationIgnored var onFailure: (() -> Void)?
+    @ObservationIgnored private var pendingSelection: Task<Void, Never>?
+
+    init(factory: @escaping EngineFactory = LocalTranscriptionEngine.defaultFactory) {
         let host = WhisperModelStorage.makeHost()
         self.host = host
-        self.live = LiveTranscriber(host: host)
+        self.factory = factory
+        self.engine = factory(.apple)
+        attach(engine)
+    }
+
+    func select(_ kind: LiveEngineKind) async {
+        let earlier = pendingSelection
+        let selection = Task { @MainActor [weak self] in
+            await earlier?.value
+            await self?.replaceEngine(with: kind)
+        }
+        pendingSelection = selection
+        await selection.value
+    }
+
+    private func replaceEngine(with kind: LiveEngineKind) async {
+        guard kind != engine.kind else { return }
+        let previous = engine
+        router.set(nil)
+        previous.onFailure = nil
+        await previous.unload()
+        lastPreparation = nil
+        let next = factory(kind)
+        engine = next
+        attach(next)
+    }
+
+    private func attach(_ engine: any LiveSpeechEngine) {
+        engine.labelSpeakers = labelSpeakers
+        engine.onFailure = { [weak self] in self?.onFailure?() }
+        router.set(engine.inbox)
     }
 
     // MARK: Model state
@@ -95,35 +138,45 @@ final class LocalTranscriptionEngine {
         await host.loadModel(name, downloadIfNeeded: downloadIfNeeded)
     }
 
+    var holdsOfflineModels: Bool { loadedModelName != nil || speakerKit != nil }
+
+    func unloadOfflineModels() {
+        host.unload()
+        speakerKit = nil
+    }
+
     // MARK: Live surface
 
-    var confirmedLines: [TranscriptLine] { live.confirmedLines }
-    var hypothesis: String { live.hypothesis }
-    var isSessionActive: Bool { live.isSessionActive }
-    var revision: Int { live.revision }
-    var hasText: Bool { live.hasText }
+    var confirmedLines: [TranscriptLine] { engine.confirmedLines }
+    var hypothesis: String { engine.hypothesis }
+    var isSessionActive: Bool { engine.isSessionActive }
+    var revision: Int { engine.revision }
+    var hasText: Bool { !confirmedLines.isEmpty || !hypothesis.isEmpty }
 
-    var language: String? {
-        get { live.language }
-        set { live.language = newValue }
+    var language: String?
+
+    var labelSpeakers = true {
+        didSet { engine.labelSpeakers = labelSpeakers }
     }
 
-    var labelSpeakers: Bool {
-        get { live.labelSpeakers }
-        set { live.labelSpeakers = newValue }
+    var inbox: StreamingAudioInput { engine.inbox }
+
+    func beginSession(language: String, progress: @escaping @Sendable (Double?) -> Void = { _ in }) async throws {
+        let info = try await engine.prepare(language: language, progress: progress)
+        lastPreparation = info
+        try Task.checkCancellation()
+        try engine.startSession()
     }
 
-    nonisolated var inbox: SampleInbox { live.inbox }
+    func cancelSession() { engine.cancelSession() }
 
-    func beginSession() { live.beginSession() }
-    func cancelSession() { live.cancelSession() }
-
-    func endSession() async -> LiveTranscriber.LiveSessionResult {
-        await live.endSession()
+    func endSession() async -> LiveSessionResult {
+        await engine.endSession()
     }
 
     func transcript(includeHypothesis: Bool) -> String {
-        live.transcript(includeHypothesis: includeHypothesis)
+        (confirmedLines.map(\.markdown) + (includeHypothesis && !hypothesis.isEmpty ? [hypothesis] : []))
+            .joined(separator: "\n\n")
     }
 
     // MARK: Private state
@@ -142,10 +195,10 @@ final class LocalTranscriptionEngine {
     private func decodingOptions(forFile: Bool) -> DecodingOptions {
         DecodingOptions(
             task: .transcribe,
-            language: live.language,
+            language: language,
             temperatureFallbackCount: 3,
             usePrefillPrompt: true,
-            detectLanguage: live.language == nil,
+            detectLanguage: language == nil,
             skipSpecialTokens: true,
             suppressBlank: true,
             chunkingStrategy: forFile ? .vad : nil

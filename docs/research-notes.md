@@ -1,5 +1,9 @@
 # Research notes (SDK-verified, macOS 26.3 / Xcode 26.4)
 
+Historical capture-design notes. The November 2026 [streaming investigation](transcription-performance.md)
+and [Apple implementation](apple-streaming.md) supersede the transcription, retention-default,
+and deployment descriptions below.
+
 ## Synthesis (architecture decisions)
 
 I'll produce the architecture recommendation. This is a synthesis task — I have all the research briefs and verification verdicts I need, so I'll write the decisive document directly.

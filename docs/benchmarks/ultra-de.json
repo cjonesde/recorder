@@ -1,0 +1,30 @@
+{
+  "audio" : "\/Users\/christopherjones\/projects\/cjonesde\/recorder\/Tools\/ASRBenchmark\/fixtures\/german.aiff",
+  "audioSeconds" : 16.938500000000001,
+  "backend" : "parakeet",
+  "fallbacks" : 3,
+  "firstDecodeSeconds" : 0.27187299728393555,
+  "firstText" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+  "language" : "auto",
+  "loadSecondsIncludingDownload" : 21.211928009986877,
+  "model" : "ultra",
+  "os" : "Version 27.2 (Build 26B123)",
+  "peakRSSBytes" : 675577856,
+  "physicalMemoryBytes" : 17179869184,
+  "warmDecodeSeconds" : [
+    0.22764301300048828,
+    0.22136497497558594,
+    0.21986901760101318,
+    0.22762799263000488,
+    0.24706399440765381
+  ],
+  "warmMedianSeconds" : 0.22762799263000488,
+  "warmRealtimeMultiplier" : 74.413079886587042,
+  "warmTexts" : [
+    "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+    "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+    "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+    "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+    "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte"
+  ]
+}

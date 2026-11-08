@@ -40,8 +40,8 @@ final class AudioHandlingModeTests: XCTestCase {
         XCTAssertNil(AudioHandlingMode(rawValue: "nonsense"))
     }
 
-    func testDefaultKeepsAudioAndPolishes() {
-        XCTAssertEqual(AudioHandlingMode.default, .keepAudioAndPolish)
+    func testDefaultKeepsOnlyTheTranscript() {
+        XCTAssertEqual(AudioHandlingMode.default, .transcriptOnly)
     }
 
     func testEveryModeHasUserFacingText() {

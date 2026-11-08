@@ -1,0 +1,299 @@
+{
+  "audioSeconds" : 11,
+  "backend" : "apple",
+  "droppedChunks" : 0,
+  "events" : [
+    {
+      "audioThroughSeconds" : 1.1,
+      "final" : false,
+      "text" : "And",
+      "wallSeconds" : 1.190090208328911
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so",
+      "wallSeconds" : 2.0609132499957923
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so,",
+      "wallSeconds" : 2.0609389583332813
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so, my",
+      "wallSeconds" : 2.0609440416665166
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so, my f",
+      "wallSeconds" : 2.0609476666650153
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so, my fellow",
+      "wallSeconds" : 2.0609513749950565
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "And so, my fellow Americ",
+      "wallSeconds" : 3.035588041668234
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "And so, my fellow Americans",
+      "wallSeconds" : 3.0363371249986812
+    },
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask",
+      "wallSeconds" : 4.925592458333995
+    },
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not",
+      "wallSeconds" : 4.9258636250015115
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what",
+      "wallSeconds" : 6.8430349999980535
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your",
+      "wallSeconds" : 6.843485999997938
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country",
+      "wallSeconds" : 6.8439476666681
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can",
+      "wallSeconds" : 6.845041374996072
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do",
+      "wallSeconds" : 7.845079083330347
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for",
+      "wallSeconds" : 7.845468624997011
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for you",
+      "wallSeconds" : 7.845866916664818
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for you.",
+      "wallSeconds" : 8.83390741666517
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : true,
+      "text" : "And so, my fellow Americans, ask not what your country can do for you.",
+      "wallSeconds" : 9.021497083333088
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask",
+      "wallSeconds" : 9.74753833332943
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what",
+      "wallSeconds" : 9.747793916663795
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what you",
+      "wallSeconds" : 9.747981708329462
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what you can",
+      "wallSeconds" : 9.748296958328865
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what you can do",
+      "wallSeconds" : 9.748566166665114
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : " Ask what you can do for",
+      "wallSeconds" : 10.739106125001854
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : " Ask what you can do for your",
+      "wallSeconds" : 10.739406166663684
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : " Ask what you can do for your country",
+      "wallSeconds" : 10.739605541668425
+    },
+    {
+      "audioThroughSeconds" : 11,
+      "final" : false,
+      "text" : " Ask what you can do for your country.",
+      "wallSeconds" : 11.03185620833392
+    },
+    {
+      "audioThroughSeconds" : 10.68,
+      "final" : true,
+      "text" : " Ask what you can do for your country.",
+      "wallSeconds" : 11.09577933332912
+    }
+  ],
+  "finalText" : "And so, my fellow Americans, ask not what your country can do for you.  Ask what you can do for your country.",
+  "finishSeconds" : 0.11002787499455735,
+  "inputBufferLifetimeSeconds" : [
+    0.0006607083341805264,
+    4.654166696127504e-05,
+    2.716666494961828e-05,
+    4.0583334339316934e-05,
+    4.320833249948919e-05,
+    3.4374999813735485e-05,
+    3.0625000363215804e-05,
+    3.462500171735883e-05,
+    3.5291668609716e-05,
+    5.1333336159586906e-05,
+    0.0001259166674572043,
+    4.1958337533287704e-05,
+    6.295833009062335e-05,
+    6.537499575642869e-05,
+    7.962500239955261e-05,
+    4.220833216095343e-05,
+    8.083332795649767e-05,
+    3.8499994843732566e-05,
+    8.258333400590345e-05,
+    7.354166154982522e-05,
+    4.900000203633681e-05,
+    5.166666960576549e-05,
+    7.320833537960425e-05,
+    9.716666681924835e-05,
+    3.2458330679219216e-05,
+    3.1124996894504875e-05,
+    4.408333188621327e-05,
+    4.370833630673587e-05,
+    4.391666880110279e-05,
+    8.86249981704168e-05,
+    0.0002958750046673231,
+    9.091667016036808e-05,
+    8.55833277455531e-05,
+    6.25000029685907e-05,
+    6.683333776891232e-05,
+    6.541666516568512e-05,
+    5.5333330237772316e-05,
+    9.012499504024163e-05,
+    5.720833723898977e-05,
+    7.495833415305242e-05,
+    3.58333345502615e-05,
+    2.7666668756864965e-05,
+    3.429166827118024e-05,
+    3.3166666980832815e-05,
+    4.6624998503830284e-05,
+    3.2625001040287316e-05,
+    3.6249999538995326e-05,
+    3.045833727810532e-05,
+    3.3208336390089244e-05,
+    5.291667184792459e-05,
+    0.00010433333955006674,
+    0.0001365416683256626,
+    0.00014058333181310445,
+    4.649999755201861e-05,
+    8.33750018500723e-05,
+    5.841667007189244e-05,
+    0.0001665833333390765,
+    5.7541670685168356e-05,
+    9.4374998298008e-05,
+    3.2208328775595874e-05,
+    0.0001356249995296821,
+    0.0001010416672215797,
+    3.375000233063474e-05,
+    3.708332951646298e-05,
+    3.0125003831926733e-05,
+    5.2291667088866234e-05,
+    4.562499816529453e-05,
+    3.712499892571941e-05,
+    5.1583330787252635e-05,
+    0.00020412500452948734,
+    5.8041667216457427e-05,
+    9.012500231619924e-05,
+    6.200000643730164e-05,
+    7.162499969126657e-05,
+    3.787500463658944e-05,
+    5.320833588484675e-05,
+    9.616666648071259e-05,
+    0.0001802916667656973,
+    5.433332989923656e-05,
+    4.587500006891787e-05,
+    3.133332938887179e-05,
+    3.4249998861923814e-05,
+    3.229166759410873e-05,
+    3.4374999813735485e-05,
+    5.075000080978498e-05,
+    3.008332714671269e-05,
+    2.833332837326452e-05,
+    3.699999797390774e-05,
+    3.541666956152767e-05,
+    4.104166873730719e-05,
+    4.2458334064576775e-05,
+    5.945833254372701e-05,
+    0.00010083333472721279,
+    0.0001620833354536444,
+    6.404166924767196e-05,
+    0.00015354166680481285,
+    8.733333379495889e-05,
+    0.00011666666978271678,
+    6.325000140350312e-05,
+    0.00012162500206613913,
+    5.4166666814126074e-05,
+    2.9499999072868377e-05,
+    6.79166623740457e-05,
+    4.016666207462549e-05,
+    3.47500026691705e-05,
+    7.750000077066943e-05,
+    4.1624996811151505e-05,
+    4.962499951943755e-05,
+    0.000117083327495493,
+    9.737499931361526e-05
+  ],
+  "language" : "en-US",
+  "loadSecondsIncludingDownload" : 0.2248382916659466,
+  "peakInputBytes" : 3200,
+  "remainingInputBytes" : 0
+}

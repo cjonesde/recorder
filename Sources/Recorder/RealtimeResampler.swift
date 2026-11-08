@@ -19,6 +19,10 @@ final class RealtimeResampler {
         self.outputRate = outputRate
     }
 
+    deinit {
+        withUnsafeMutablePointer(to: &prev) { AudioMemory.erase($0, count: 1) }
+    }
+
     /// Adopt a new input rate and drop carried interpolation state. Only safe while
     /// the producer is stopped.
     func reset(inputRate: Double) {

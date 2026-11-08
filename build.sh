@@ -29,6 +29,11 @@ mkdir -p "$RESOURCES"
 
 cp ".build/release/Recorder" "$MACOS/Recorder"
 cp "Info.plist" "$CONTENTS/Info.plist"
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
+if [ -n "$GIT_COMMIT" ]; then
+    /usr/libexec/PlistBuddy -c "Delete :RecorderGitCommit" "$CONTENTS/Info.plist" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :RecorderGitCommit string $GIT_COMMIT" "$CONTENTS/Info.plist"
+fi
 
 # App icon (built from icon.swift via make-icon.sh). Optional: skip if absent.
 if [ -f "Recorder.icns" ]; then

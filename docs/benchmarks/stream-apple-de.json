@@ -1,0 +1,371 @@
+{
+  "audioSeconds" : 16.9385,
+  "backend" : "apple",
+  "droppedChunks" : 0,
+  "events" : [
+    {
+      "audioThroughSeconds" : 1.1,
+      "final" : false,
+      "text" : "Guten",
+      "wallSeconds" : 1.164615291665541
+    },
+    {
+      "audioThroughSeconds" : 1.1,
+      "final" : false,
+      "text" : "Guten Morgen",
+      "wallSeconds" : 1.1666762083332287
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "Guten Morgen,",
+      "wallSeconds" : 2.0481827499970677
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "Guten Morgen, wir",
+      "wallSeconds" : 2.057569708333176
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "Guten Morgen, wir bes",
+      "wallSeconds" : 2.061254624997673
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "Guten Morgen, wir besp",
+      "wallSeconds" : 2.0630164583271835
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen",
+      "wallSeconds" : 2.065402208332671
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute",
+      "wallSeconds" : 3.032236291663139
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die",
+      "wallSeconds" : 3.036973666661652
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Plan",
+      "wallSeconds" : 3.0413355416676495
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung",
+      "wallSeconds" : 3.0431787916604662
+    },
+    {
+      "audioThroughSeconds" : 4,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für",
+      "wallSeconds" : 4.032860458333744
+    },
+    {
+      "audioThroughSeconds" : 4,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das",
+      "wallSeconds" : 4.035136499995133
+    },
+    {
+      "audioThroughSeconds" : 4,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste",
+      "wallSeconds" : 4.046564916665375
+    },
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Pro",
+      "wallSeconds" : 4.931211541661469
+    },
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt",
+      "wallSeconds" : 4.933184416666336
+    },
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt.",
+      "wallSeconds" : 4.9365841666658525
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die",
+      "wallSeconds" : 5.946052249993954
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue",
+      "wallSeconds" : 5.947957749995112
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue An",
+      "wallSeconds" : 5.950126083327632
+    },
+    {
+      "audioThroughSeconds" : 5.9,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung",
+      "wallSeconds" : 5.953027958334133
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll",
+      "wallSeconds" : 6.829376374997082
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache",
+      "wallSeconds" : 6.835253208329959
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell",
+      "wallSeconds" : 7.847919666666712
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und",
+      "wallSeconds" : 7.853643208327412
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zu",
+      "wallSeconds" : 7.856983541663794
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuver",
+      "wallSeconds" : 7.858733583329013
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlä",
+      "wallSeconds" : 7.860680916666752
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig",
+      "wallSeconds" : 7.863029666666989
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in",
+      "wallSeconds" : 8.83255291666137
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text",
+      "wallSeconds" : 8.836285458331986
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text um",
+      "wallSeconds" : 8.838348708333797
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umw",
+      "wallSeconds" : 9.731891041665222
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln",
+      "wallSeconds" : 9.73425429166673
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln.",
+      "wallSeconds" : 9.736893875000533
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle",
+      "wallSeconds" : 10.74774824999622
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Auf",
+      "wallSeconds" : 10.7489980833343
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen",
+      "wallSeconds" : 10.750798083332484
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben",
+      "wallSeconds" : 10.753094791667536
+    },
+    {
+      "audioThroughSeconds" : 11.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf",
+      "wallSeconds" : 11.63723612499598
+    },
+    {
+      "audioThroughSeconds" : 11.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem",
+      "wallSeconds" : 11.639199083329004
+    },
+    {
+      "audioThroughSeconds" : 11.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer",
+      "wallSeconds" : 11.642960208329896
+    },
+    {
+      "audioThroughSeconds" : 12.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer.",
+      "wallSeconds" : 12.626842749996285
+    },
+    {
+      "audioThroughSeconds" : 12.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am",
+      "wallSeconds" : 12.629015499995148
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag",
+      "wallSeconds" : 13.632198416664323
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag p",
+      "wallSeconds" : 13.634946791666152
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prü",
+      "wallSeconds" : 13.636027416665456
+    },
+    {
+      "audioThroughSeconds" : 13.6,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen",
+      "wallSeconds" : 13.637197874995763
+    },
+    {
+      "audioThroughSeconds" : 14.5,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir",
+      "wallSeconds" : 14.542147208332608
+    },
+    {
+      "audioThroughSeconds" : 14.5,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam",
+      "wallSeconds" : 14.551207791664638
+    },
+    {
+      "audioThroughSeconds" : 14.5,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die",
+      "wallSeconds" : 14.55356166666752
+    },
+    {
+      "audioThroughSeconds" : 15.5,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse",
+      "wallSeconds" : 15.537563541663985
+    },
+    {
+      "audioThroughSeconds" : 15.5,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und",
+      "wallSeconds" : 15.540404458333796
+    },
+    {
+      "audioThroughSeconds" : 16.4,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden",
+      "wallSeconds" : 16.444475708332902
+    },
+    {
+      "audioThroughSeconds" : 16.4,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über",
+      "wallSeconds" : 16.44675237499905
+    },
+    {
+      "audioThroughSeconds" : 16.4,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die",
+      "wallSeconds" : 16.448437958330032
+    },
+    {
+      "audioThroughSeconds" : 16.9385,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten",
+      "wallSeconds" : 16.960337874996185
+    },
+    {
+      "audioThroughSeconds" : 16.9385,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Sch",
+      "wallSeconds" : 16.963098499996704
+    },
+    {
+      "audioThroughSeconds" : 16.9385,
+      "final" : false,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+      "wallSeconds" : 16.964951750000182
+    },
+    {
+      "audioThroughSeconds" : 16.9385,
+      "final" : true,
+      "text" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+      "wallSeconds" : 17.08694399999513
+    }
+  ],
+  "finalText" : "Guten Morgen, wir besprechen heute die Planung für das nächste Projekt. Die neue Anwendung soll Sprache schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte",
+  "finishSeconds" : 0.14735254166589584,
+  "language" : "de-DE",
+  "loadSecondsIncludingDownload" : 0.15812029166409047
+}

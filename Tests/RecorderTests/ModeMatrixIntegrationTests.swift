@@ -15,9 +15,15 @@ final class ModeMatrixIntegrationTests: XCTestCase {
     /// Folders this test created, removed in teardown. Recordings land in the real
     /// library, so nothing may be left behind.
     private var created: [URL] = []
+    private var previousEngine = Preferences.liveEngine
+
+    override func setUp() async throws {
+        previousEngine = Preferences.liveEngine
+    }
 
     override func tearDown() async throws {
         cleanUp()
+        Preferences.liveEngine = previousEngine
     }
 
     /// Remove every folder this test created. Called explicitly at the end of each test
@@ -30,8 +36,9 @@ final class ModeMatrixIntegrationTests: XCTestCase {
         created = []
     }
 
-    private func makeModel(mode: AudioHandlingMode) -> RecorderModel {
+    private func makeModel(mode: AudioHandlingMode, engine kind: LiveEngineKind) -> RecorderModel {
         let model = RecorderModel()
+        model.liveEngine = kind
         model.configureCaptures()
         model.silenceAutoStopEnabled = false
         model.liveTranscriptionEnabled = true
@@ -41,12 +48,14 @@ final class ModeMatrixIntegrationTests: XCTestCase {
 
     private func record(
         mode: AudioHandlingMode,
+        engine kind: LiveEngineKind,
         seconds: TimeInterval
     ) async throws -> URL {
-        let model = makeModel(mode: mode)
+        let model = makeModel(mode: mode, engine: kind)
 
         // No meeting: scheduling a meeting-end notification needs a real app bundle.
         model.startRecording(meeting: nil)
+        while model.state == .preparing { try await Task.sleep(for: .milliseconds(100)) }
         let session = try XCTUnwrap(
             model.currentSession,
             "recording did not start: \(model.statusMessage ?? "no message")"
@@ -68,15 +77,15 @@ final class ModeMatrixIntegrationTests: XCTestCase {
         Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
     }
 
-    func testTranscriptOnlyLeavesNoAudioOnDisk() async throws {
+    private func verifyTranscriptOnlyLeavesNoAudioOnDisk(engine kind: LiveEngineKind) async throws {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["RECORDER_LIVE_MODES"] == "1",
             "set RECORDER_LIVE_MODES=1 to run the mode matrix check"
         )
 
-        let folder = try await record(mode: .transcriptOnly, seconds: 8)
+        let folder = try await record(mode: .transcriptOnly, engine: kind, seconds: 8)
         let files = contents(folder)
-        print("transcriptOnly produced: \(files.sorted())")
+        print("transcriptOnly produced (\(kind.rawValue)): \(files.sorted())")
 
         for audio in ["audio.m4a", "desktop.caf", "mic.caf"] {
             XCTAssertFalse(files.contains(audio), "transcript-only wrote \(audio)")
@@ -88,15 +97,15 @@ final class ModeMatrixIntegrationTests: XCTestCase {
         cleanUp()
     }
 
-    func testKeepAudioWritesTheAudioFiles() async throws {
+    private func verifyKeepAudioWritesTheAudioFiles(engine kind: LiveEngineKind) async throws {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["RECORDER_LIVE_MODES"] == "1",
             "set RECORDER_LIVE_MODES=1 to run the mode matrix check"
         )
 
-        let folder = try await record(mode: .keepAudio, seconds: 8)
+        let folder = try await record(mode: .keepAudio, engine: kind, seconds: 8)
         let files = contents(folder)
-        print("keepAudio produced: \(files.sorted())")
+        print("keepAudio produced (\(kind.rawValue)): \(files.sorted())")
 
         XCTAssertTrue(files.contains("desktop.caf"), "missing desktop.caf")
         XCTAssertTrue(files.contains("mic.caf"), "missing mic.caf")
@@ -104,14 +113,15 @@ final class ModeMatrixIntegrationTests: XCTestCase {
         cleanUp()
     }
 
-    func testDowngradingMidRecordingDeletesThePartialAudio() async throws {
+    private func verifyDowngradingMidRecordingDeletesThePartialAudio(engine kind: LiveEngineKind) async throws {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["RECORDER_LIVE_MODES"] == "1",
             "set RECORDER_LIVE_MODES=1 to run the mode matrix check"
         )
 
-        let model = makeModel(mode: .keepAudioAndPolish)
+        let model = makeModel(mode: .keepAudioAndPolish, engine: kind)
         model.startRecording(meeting: nil)
+        while model.state == .preparing { try await Task.sleep(for: .milliseconds(100)) }
         let session = try XCTUnwrap(model.currentSession)
         let folder = session.folderURL
         created.append(folder)
@@ -129,10 +139,46 @@ final class ModeMatrixIntegrationTests: XCTestCase {
         try await Task.sleep(for: .seconds(20))
 
         let files = contents(folder)
-        print("downgrade produced: \(files.sorted())")
+        print("downgrade produced (\(kind.rawValue)): \(files.sorted())")
         for audio in ["audio.m4a", "desktop.caf", "mic.caf"] {
             XCTAssertFalse(files.contains(audio), "downgrade left \(audio) behind")
         }
         cleanUp()
+    }
+
+    func testTranscriptOnlyLeavesNoAudioOnDiskWithApple() async throws {
+        try await verifyTranscriptOnlyLeavesNoAudioOnDisk(engine: .apple)
+    }
+
+    func testTranscriptOnlyLeavesNoAudioOnDiskWithNemotron() async throws {
+        try await verifyTranscriptOnlyLeavesNoAudioOnDisk(engine: .nemotron)
+    }
+
+    func testTranscriptOnlyLeavesNoAudioOnDiskWithParakeet() async throws {
+        try await verifyTranscriptOnlyLeavesNoAudioOnDisk(engine: .parakeet)
+    }
+
+    func testKeepAudioWritesTheAudioFilesWithApple() async throws {
+        try await verifyKeepAudioWritesTheAudioFiles(engine: .apple)
+    }
+
+    func testKeepAudioWritesTheAudioFilesWithNemotron() async throws {
+        try await verifyKeepAudioWritesTheAudioFiles(engine: .nemotron)
+    }
+
+    func testKeepAudioWritesTheAudioFilesWithParakeet() async throws {
+        try await verifyKeepAudioWritesTheAudioFiles(engine: .parakeet)
+    }
+
+    func testDowngradingMidRecordingDeletesThePartialAudioWithApple() async throws {
+        try await verifyDowngradingMidRecordingDeletesThePartialAudio(engine: .apple)
+    }
+
+    func testDowngradingMidRecordingDeletesThePartialAudioWithNemotron() async throws {
+        try await verifyDowngradingMidRecordingDeletesThePartialAudio(engine: .nemotron)
+    }
+
+    func testDowngradingMidRecordingDeletesThePartialAudioWithParakeet() async throws {
+        try await verifyDowngradingMidRecordingDeletesThePartialAudio(engine: .parakeet)
     }
 }

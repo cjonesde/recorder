@@ -24,6 +24,7 @@ struct RecorderApp: App {
     private var menuBarSymbol: String {
         switch model.state {
         case .idle:      return "mic.fill"
+        case .preparing, .finishing: return "hourglass"
         case .recording: return "record.circle.fill"
         case .paused:    return "pause.circle.fill"
         }
