@@ -162,6 +162,41 @@ final class DebugReportTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Saved")
     }
 
+    func testUnloadForPolishEventReachesTheAlreadyWrittenDebugJSON() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        created.append(folder)
+        let recorder = recorderWithSamples()
+        try recorder.report(language: "en-US").write(to: folder)
+        let before = try JSONDecoder().decode(DebugReport.self, from: Data(contentsOf: folder.appendingPathComponent("debug.json")))
+        XCTAssertFalse(before.events.contains { $0.kind == "live engine unloaded for polish" })
+
+        let fake = FakeLiveEngine(kind: .parakeet)
+        let model = RecorderModel(
+            engineFactory: { _ in fake },
+            whisperLoader: { _ in },
+            fileTranscriber: { _ in throw CancellationError() }
+        )
+        model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: nil, diagnostics: recorder, reportLanguage: "en-US")
+        for _ in 0..<200 where fake.unloadCalls == 0 { try await Task.sleep(for: .milliseconds(25)) }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let after = try JSONDecoder().decode(DebugReport.self, from: Data(contentsOf: folder.appendingPathComponent("debug.json")))
+        XCTAssertTrue(after.events.contains { $0.kind == "live engine unloaded for polish" })
+    }
+
+    func testUnloadForPolishWithoutDiagnosticsWritesNoDebugJSON() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        created.append(folder)
+        let fake = FakeLiveEngine(kind: .parakeet)
+        let model = RecorderModel(engineFactory: { _ in fake }, whisperLoader: { _ in }, fileTranscriber: { _ in throw CancellationError() })
+        model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: nil, diagnostics: nil, reportLanguage: nil)
+        for _ in 0..<200 where fake.unloadCalls == 0 { try await Task.sleep(for: .milliseconds(25)) }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("debug.json").path))
+    }
+
     private func recordAndSave(_ model: RecorderModel, seconds: TimeInterval) async throws -> URL {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["RECORDER_LIVE_MODES"] == "1",

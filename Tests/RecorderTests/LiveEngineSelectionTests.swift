@@ -385,10 +385,48 @@ final class LiveEngineSelectionTests: XCTestCase {
 
     @MainActor func testPolishPassKeepsTheLiveEngineWhileASessionIsActive() async throws {
         let fake = FakeLiveEngine(kind: .apple)
-        let model = RecorderModel(engineFactory: { _ in fake }, whisperLoader: { _ in })
+        var loads = 0
+        let model = RecorderModel(engineFactory: { _ in fake }, whisperLoader: { _ in loads += 1 }, fileTranscriber: { _ in throw CancellationError() })
         try await model.live.beginSession(language: "en-US")
         XCTAssertTrue(model.live.isSessionActive)
-        await model.unloadLiveEngineForPolish()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("polish-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: nil, diagnostics: nil, reportLanguage: nil)
+        for _ in 0..<200 where loads == 0 { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertEqual(loads, 1)
         XCTAssertEqual(fake.unloadCalls, 0)
+    }
+
+    @MainActor func testPolishDocumentRecordsTheLiveEngineThatRan() async throws {
+        let folder = try await polishFolder(liveEngineName: "Fake Parakeet")
+        let document = try TranscriptDocument.load(from: folder.appendingPathComponent("transcript.json"))
+        XCTAssertEqual(document.liveEngine, "Fake Parakeet")
+        XCTAssertTrue(try String(contentsOf: folder.appendingPathComponent("transcript.md"), encoding: .utf8).contains("Live engine"))
+    }
+
+    @MainActor func testPolishDocumentHasNoLiveEngineWhenLiveTranscriptionDidNotRun() async throws {
+        let folder = try await polishFolder(liveEngineName: nil)
+        let document = try TranscriptDocument.load(from: folder.appendingPathComponent("transcript.json"))
+        XCTAssertNil(document.liveEngine)
+        XCTAssertFalse(try String(contentsOf: folder.appendingPathComponent("transcript.md"), encoding: .utf8).contains("Live engine"))
+    }
+
+    @MainActor private func polishFolder(liveEngineName: String?) async throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("polish-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        let model = RecorderModel(
+            engineFactory: { FakeLiveEngine(kind: $0) },
+            whisperLoader: { _ in },
+            fileTranscriber: { _ in
+                OfflineTranscription(lines: [TranscriptLine(time: 0, text: "hello", speaker: nil)], clusters: [:], speakerNames: [:])
+            }
+        )
+        model.startPolishForTesting(audioURL: folder.appendingPathComponent("a.wav"), folderURL: folder, liveEngineName: liveEngineName, diagnostics: nil, reportLanguage: nil)
+        let json = folder.appendingPathComponent("transcript.json")
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: json.path) { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: json.path))
+        return folder
     }
 }

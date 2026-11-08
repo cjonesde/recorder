@@ -27,13 +27,17 @@ final class RecorderModel {
     let live: LocalTranscriptionEngine
 
     @ObservationIgnored private let whisperLoader: (@MainActor (String) async -> Void)?
+    @ObservationIgnored private let fileTranscriber: (@MainActor (URL) async throws -> OfflineTranscription)?
+    @ObservationIgnored private var recordingUsesLive = false
 
     init(
         engineFactory: @escaping LocalTranscriptionEngine.EngineFactory = LocalTranscriptionEngine.defaultFactory,
-        whisperLoader: (@MainActor (String) async -> Void)? = nil
+        whisperLoader: (@MainActor (String) async -> Void)? = nil,
+        fileTranscriber: (@MainActor (URL) async throws -> OfflineTranscription)? = nil
     ) {
         live = LocalTranscriptionEngine(factory: engineFactory)
         self.whisperLoader = whisperLoader
+        self.fileTranscriber = fileTranscriber
     }
 
     // MARK: - Persisted preferences (mirrored to UserDefaults via Preferences)
@@ -153,13 +157,15 @@ final class RecorderModel {
     @ObservationIgnored private var activeMode: AudioHandlingMode = .default
 
     /// Everything needed to (re)run a transcription, captured at save time.
-    private struct PendingTranscription {
+    struct PendingTranscription {
         let audioURL: URL?
         let folderURL: URL
         let meetingTitle: String?
         let attendees: [String]
         let startedAt: Date
         var liveEngineName: String? = nil
+        var diagnostics: DiagnosticsRecorder? = nil
+        var reportLanguage: String? = nil
     }
     @ObservationIgnored private var lastTranscription: PendingTranscription?
 
@@ -279,6 +285,7 @@ final class RecorderModel {
         let language = transcriptionLanguage
         let wantsLive = liveTranscriptionEnabled
         let kind = liveEngine
+        recordingUsesLive = wantsLive
         state = .preparing
         statusMessage = wantsLive ? Self.preparingMessage(kind, progress: nil) : "Starting capture…"
         let diagnostics = beginDiagnostics(engine: kind, liveTranscription: wantsLive, settings: [
@@ -523,7 +530,9 @@ final class RecorderModel {
                 meetingTitle: meetingTitle,
                 attendees: attendees,
                 startedAt: startedAt,
-                liveEngineName: live.engine.displayName
+                liveEngineName: recordingUsesLive ? live.engine.displayName : nil,
+                diagnostics: diagnostics,
+                reportLanguage: reportLanguage
             )
             lastTranscription = pending
             transcriptionState = .running
@@ -556,7 +565,9 @@ final class RecorderModel {
             meetingTitle: meetingTitle,
             attendees: attendees,
             startedAt: startedAt,
-            liveEngineName: live.engine.displayName
+            liveEngineName: recordingUsesLive ? live.engine.displayName : nil,
+            diagnostics: diagnostics,
+            reportLanguage: reportLanguage
         )
         let wantsTranscript = liveTranscriptionEnabled || mode.runsPolishPass
         if wantsTranscript {
@@ -851,13 +862,18 @@ final class RecorderModel {
                 return
             }
             do {
-                await self.unloadLiveEngineForPolish()
+                await self.unloadLiveEngineForPolish(pending)
                 if let whisperLoader = self.whisperLoader {
                     await whisperLoader(self.whisperModel)
                 } else {
                     await self.live.loadModel(self.whisperModel, downloadIfNeeded: true)
                 }
-                let offline = try await self.live.transcribeFile(audioURL)
+                let offline: OfflineTranscription
+                if let fileTranscriber = self.fileTranscriber {
+                    offline = try await fileTranscriber(audioURL)
+                } else {
+                    offline = try await self.live.transcribeFile(audioURL)
+                }
                 guard !offline.lines.isEmpty else {
                     self.transcriptionState = .failed("The model returned an empty transcript (silent audio?).")
                     self.statusMessage = "Transcription produced no text"
@@ -923,10 +939,31 @@ final class RecorderModel {
     }
 
     /// Frees the resident live engine before Whisper loads, unless a live session is using it.
-    func unloadLiveEngineForPolish() async {
+    func unloadLiveEngineForPolish(_ pending: PendingTranscription) async {
         guard !live.isSessionActive else { return }
         await live.engine.unload()
-        diagnostics?.record("live engine unloaded for polish", detail: nil)
+        guard let recorder = pending.diagnostics else { return }
+        recorder.record("live engine unloaded for polish", detail: nil)
+        persistDebugReport(recorder, folder: pending.folderURL, language: pending.reportLanguage)
+    }
+
+    func startPolishForTesting(
+        audioURL: URL,
+        folderURL: URL,
+        liveEngineName: String?,
+        diagnostics: DiagnosticsRecorder?,
+        reportLanguage: String?
+    ) {
+        startTranscription(PendingTranscription(
+            audioURL: audioURL,
+            folderURL: folderURL,
+            meetingTitle: nil,
+            attendees: [],
+            startedAt: Date(),
+            liveEngineName: liveEngineName,
+            diagnostics: diagnostics,
+            reportLanguage: reportLanguage
+        ))
     }
 
     /// Compose the transcript document, write it to transcript.md, and update
