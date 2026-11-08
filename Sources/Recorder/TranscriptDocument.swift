@@ -26,6 +26,8 @@ struct TranscriptDocument: Codable, Equatable {
     /// stay out of the recording folder, so a transcript you share carries none.
     var speakerCentroidsID: String?
 
+    var liveEngine: String?
+
     /// Speaker ids in order of first speech.
     var speakerIDs: [String] {
         var seen: Set<String> = []
@@ -69,7 +71,14 @@ struct TranscriptDocument: Codable, Equatable {
         } else {
             out.append("- **Audio:** not retained (transcript only)")
         }
-        out.append("- **Model:** WhisperKit `\(model)` (on-device)")
+        if isPolished {
+            out.append("- **Model:** WhisperKit `\(model)` (on-device)")
+            if let liveEngine, !liveEngine.isEmpty {
+                out.append("- **Live engine:** \(liveEngine)")
+            }
+        } else {
+            out.append("- **Engine:** \(model) (on-device)")
+        }
         out.append("- **Source:** \(isPolished ? "high-quality pass over the recorded audio" : "live transcription")")
         out.append("")
         out.append("---")
@@ -120,5 +129,6 @@ extension TranscriptDocument {
             uniqueKeysWithValues: Set(lines.compactMap(\.speaker)).map { ($0, $0) }
         )
         self.speakerCentroidsID = nil
+        self.liveEngine = nil
     }
 }

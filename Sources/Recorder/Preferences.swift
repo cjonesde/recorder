@@ -18,6 +18,8 @@ enum Preferences {
         static let liveTranscription   = "liveTranscriptionEnabled"
         static let speakerLabels       = "speakerLabelsEnabled"
         static let voiceProfiles       = "voiceProfilesEnabled"
+        static let liveEngine          = "liveEngine"
+        static let showDebugInfo       = "showDebugInfo"
     }
 
     /// Seconds of two-channel silence before a recording auto-stops. Default 300 (5 min).
@@ -87,5 +89,19 @@ enum Preferences {
     static var voiceProfiles: Bool {
         get { defaults.bool(forKey: Key.voiceProfiles) }
         set { defaults.set(newValue, forKey: Key.voiceProfiles) }
+    }
+
+    static var liveEngine: LiveEngineKind {
+        get {
+            guard let raw = defaults.string(forKey: Key.liveEngine),
+                  let kind = LiveEngineKind(rawValue: raw) else { return .default }
+            return kind
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.liveEngine) }
+    }
+
+    static var showDebugInfo: Bool {
+        get { defaults.bool(forKey: Key.showDebugInfo) }
+        set { defaults.set(newValue, forKey: Key.showDebugInfo) }
     }
 }

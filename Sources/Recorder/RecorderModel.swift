@@ -77,6 +77,13 @@ final class RecorderModel {
         didSet { Preferences.voiceProfiles = voiceProfilesEnabled }
     }
 
+    var liveEngine: LiveEngineKind = .default {
+        didSet { Preferences.liveEngine = liveEngine }
+    }
+    var showDebugInfo: Bool = false {
+        didSet { Preferences.showDebugInfo = showDebugInfo }
+    }
+
     /// Saved voiceprints. Observed, so the Speakers pane updates as profiles change.
     let speakerStore = SpeakerProfileStore()
 
@@ -106,6 +113,7 @@ final class RecorderModel {
     @ObservationIgnored private var didAppear = false
 
     var canStartRecording: Bool { state == .idle && transcriptionState != .running }
+    var canChangeLiveEngine: Bool { state == .idle && transcriptionState != .running }
     var isCapturing: Bool { state == .recording || state == .paused }
 
     @ObservationIgnored private var elapsedTimer: Timer?
@@ -223,6 +231,8 @@ final class RecorderModel {
         liveTranscriptionEnabled = Preferences.liveTranscription
         speakerLabelsEnabled = Preferences.speakerLabels
         voiceProfilesEnabled = Preferences.voiceProfiles
+        liveEngine = Preferences.liveEngine
+        showDebugInfo = Preferences.showDebugInfo
     }
 
     // MARK: - Recording control
