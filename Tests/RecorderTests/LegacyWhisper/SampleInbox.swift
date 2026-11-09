@@ -1,3 +1,4 @@
+@testable import Recorder
 import Foundation
 import Accelerate
 import os
@@ -134,28 +135,34 @@ final class SampleInbox: @unchecked Sendable {
     }
 
     func begin() {
-        lock.withLock {
-            active = true
-            pending = [[], []]
-            resamplers = [nil, nil]
-            lastFeedNanos = [0, 0]
-        }
-        carry = [[], []]
-        blockSumSq = [0, 0]
-        blockFill = 0
+        discard()
+        lock.withLockUnchecked { active = true }
         padded = [0, 0]
         lastLoggedPadding = [0, 0]
     }
 
     func end() {
-        lock.withLock { active = false }
+        lock.withLockUnchecked { active = false }
+    }
+
+    /// Cancellation has no final decode to consume the producer backlog.
+    func discard() {
+        lock.withLockUnchecked {
+            active = false
+            for i in pending.indices { AudioMemory.discard(&pending[i]) }
+            resamplers = [nil, nil]
+            lastFeedNanos = [0, 0]
+        }
+        for i in carry.indices { AudioMemory.discard(&carry[i]) }
+        blockSumSq = [0, 0]
+        blockFill = 0
     }
 
     /// Ingest mono samples from one source. Safe to call from audio threads;
     /// a no-op while no session is active.
     func ingest(_ source: Source, _ src: UnsafePointer<Float>, count: Int, rate: Double) {
         guard count > 0, rate > 0 else { return }
-        lock.withLock {
+        lock.withLockUnchecked {
             guard active else { return }
             let i = source.rawValue
             if resamplers[i]?.inputRate != rate {
@@ -179,7 +186,7 @@ final class SampleInbox: @unchecked Sendable {
     /// outside it so the audio threads never block on this work. Must only be
     /// called from the engine's (serialized) tick loop.
     func drain(flush: Bool = false) -> DrainedAudio {
-        let (taken, recentFeed): ([[Float]], [Bool]) = lock.withLock {
+        let (taken, recentFeed): ([[Float]], [Bool]) = lock.withLockUnchecked {
             let now = Self.nowNanos()
             let recent = (0..<pending.count).map { i -> Bool in
                 guard lastFeedNanos[i] > 0 else { return false }

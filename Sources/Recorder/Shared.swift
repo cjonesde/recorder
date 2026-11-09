@@ -5,6 +5,8 @@ import AVFoundation
 
 enum RecorderState: Equatable {
     case idle
+    case preparing
+    case finishing
     case recording
     case paused
 }

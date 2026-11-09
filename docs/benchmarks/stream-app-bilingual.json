@@ -1,0 +1,85 @@
+{
+  "audioSeconds" : 52.420000000000002,
+  "backend" : "app-whisper-base-auto",
+  "complete" : true,
+  "events" : [
+    {
+      "confirmedLines" : 0,
+      "text" : "[BLANK_AUDIO]",
+      "wallSeconds" : 4.1033260833282839
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "Für die besten Aussichten auf Hong Kong.",
+      "wallSeconds" : 7.3042325833303039
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "Für die besten Aussichten auf Hong Kong sollten Sie die Insel verlassen und zum Genübungen",
+      "wallSeconds" : 10.606812541664112
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "Für die besten Aussichten auf Hong Kong sollten sie die Insel verlassen und zum Genübelie in den Ufer von Kovloom fahren.",
+      "wallSeconds" : 14.106486958327878
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "Für die besten Aussichten auf Hong Kong sollten sie die Insel verlassen und zum Genübelieh in den Ufer von Korvloom fahren.",
+      "wallSeconds" : 17.406659624997701
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Genübelieh in den Ufer von Korvloom fahren.",
+      "wallSeconds" : 20.705235875000653
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Genübli in den Ufer von Kovloom fahren.",
+      "wallSeconds" : 24.206580666665104
+    },
+    {
+      "confirmedLines" : 0,
+      "text" : "Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.",
+      "wallSeconds" : 27.705111999996006
+    },
+    {
+      "confirmedLines" : 3,
+      "text" : "[00:00] Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.\n\n[00:20] However, due to the slow communication channels,\n\n[00:23] styles in the West could lag behind by 25 to 30 years.\n\n[BLANK_AUDIO]",
+      "wallSeconds" : 31.603689625000698
+    },
+    {
+      "confirmedLines" : 3,
+      "text" : "[00:00] Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.\n\n[00:20] However, due to the slow communication channels,\n\n[00:23] styles in the West could lag behind by 25 to 30 years.\n\nEr griff auch alles an, was er hat.",
+      "wallSeconds" : 34.80459974999394
+    },
+    {
+      "confirmedLines" : 3,
+      "text" : "[00:00] Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.\n\n[00:20] However, due to the slow communication channels,\n\n[00:23] styles in the West could lag behind by 25 to 30 years.\n\nEr griff auch alles an, was ins Wasser kam. Selbst ein großer Dinosaurier wieder.",
+      "wallSeconds" : 38.205986249995476
+    },
+    {
+      "confirmedLines" : 3,
+      "text" : "[00:00] Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.\n\n[00:20] However, due to the slow communication channels,\n\n[00:23] styles in the West could lag behind by 25 to 30 years.\n\nEr griff auch alles an, was ins Wasser kam, selbst ein großer Dinosaurier wieder T-Rex war ihm nicht gewachsen. [BLANK_AUDIO]",
+      "wallSeconds" : 41.606454416665656
+    },
+    {
+      "confirmedLines" : 3,
+      "text" : "[00:00] Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.\n\n[00:20] However, due to the slow communication channels,\n\n[00:23] styles in the West could lag behind by 25 to 30 years.\n\nEr griff auch alles an, was ins Wasser kam, selbst ein großer Dinosaurier wieder T-Rex war ihm nicht gewachsen. All now is almost ready.",
+      "wallSeconds" : 45.204184249996615
+    },
+    {
+      "confirmedLines" : 3,
+      "text" : "[00:00] Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.\n\n[00:20] However, due to the slow communication channels,\n\n[00:23] styles in the West could lag behind by 25 to 30 years.\n\nEr griff auch alles an, was ins Wasser kam, selbst ein großer Dinosaurier wieder T-Rex bei ihm nicht gewachsen.",
+      "wallSeconds" : 48.603789249995316
+    },
+    {
+      "confirmedLines" : 3,
+      "text" : "[00:00] Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren.\n\n[00:20] However, due to the slow communication channels,\n\n[00:23] styles in the West could lag behind by 25 to 30 years.\n\nEr griff auch alles an, was ins Wasser kam, selbst ein großer Dinosaurier wieder T-Rex bei ihm nicht gewachsen.",
+      "wallSeconds" : 52.001149458330474
+    }
+  ],
+  "finalText" : "Für die besten Aussichten von Hong Kong sollten sie die Insel verlassen und zum Gegenübli in den Ufer von Kovloom fahren. However, due to the slow communication channels, styles in the West could lag behind by 25 to 30 years. Er griff auch alles an, was ins Wasser kam, selbst ein großer Dinosaurier wieder T-Rex bei ihm nicht gewachsen.",
+  "finishSeconds" : 0.24930500000482425,
+  "peakRSSBytes" : 169541632
+}

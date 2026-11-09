@@ -129,6 +129,14 @@ final class ModelHost<Pipe: AnyObject> {
         }
     }
 
+    func unload() {
+        loadGeneration += 1
+        pipe = nil
+        loadedModel = nil
+        loadFailureMessage = nil
+        state = .unloaded
+    }
+
     /// Wait until a model is loaded, kicking off a load when idle or after a failure.
     func awaitReady(timeout: TimeInterval = 600) async throws -> Pipe {
         switch state {
@@ -140,6 +148,9 @@ final class ModelHost<Pipe: AnyObject> {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if let pipe, case .ready = state { return pipe }
+            if case .unloaded = state {
+                await loadModel(selectedModel, downloadIfNeeded: true)
+            }
             if case .failed(let message) = state {
                 throw HostError.modelNotReady(message)
             }

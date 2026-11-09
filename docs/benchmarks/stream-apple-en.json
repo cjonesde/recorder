@@ -1,0 +1,185 @@
+{
+  "audioSeconds" : 11,
+  "backend" : "apple",
+  "droppedChunks" : 0,
+  "events" : [
+    {
+      "audioThroughSeconds" : 1.1,
+      "final" : false,
+      "text" : "And",
+      "wallSeconds" : 1.1479689166662865
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so",
+      "wallSeconds" : 2.048023541661678
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so,",
+      "wallSeconds" : 2.048492666661332
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so, my",
+      "wallSeconds" : 2.0485049583294312
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so, my f",
+      "wallSeconds" : 2.0501035833294736
+    },
+    {
+      "audioThroughSeconds" : 2,
+      "final" : false,
+      "text" : "And so, my fellow",
+      "wallSeconds" : 2.0501168333285023
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "And so, my fellow Americ",
+      "wallSeconds" : 3.036745666664501
+    },
+    {
+      "audioThroughSeconds" : 3,
+      "final" : false,
+      "text" : "And so, my fellow Americans",
+      "wallSeconds" : 3.0376677499953075
+    },
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask",
+      "wallSeconds" : 4.924834333331091
+    },
+    {
+      "audioThroughSeconds" : 4.9,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not",
+      "wallSeconds" : 4.925002208328806
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what",
+      "wallSeconds" : 6.838763291663781
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your",
+      "wallSeconds" : 6.840676458326925
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country",
+      "wallSeconds" : 6.840722374996403
+    },
+    {
+      "audioThroughSeconds" : 6.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can",
+      "wallSeconds" : 6.840727208327735
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do",
+      "wallSeconds" : 7.841231583326589
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for",
+      "wallSeconds" : 7.847189124993747
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for you",
+      "wallSeconds" : 7.8475145416668965
+    },
+    {
+      "audioThroughSeconds" : 8.8,
+      "final" : false,
+      "text" : "And so, my fellow Americans, Ask not what your country can do for you.",
+      "wallSeconds" : 8.833948833329487
+    },
+    {
+      "audioThroughSeconds" : 7.8,
+      "final" : true,
+      "text" : "And so, my fellow Americans, ask not what your country can do for you.",
+      "wallSeconds" : 8.988668999998481
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask",
+      "wallSeconds" : 9.736875541660993
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what",
+      "wallSeconds" : 9.73713783333369
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what you",
+      "wallSeconds" : 9.737389208326931
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what you can",
+      "wallSeconds" : 9.737585999995645
+    },
+    {
+      "audioThroughSeconds" : 9.7,
+      "final" : false,
+      "text" : " Ask what you can do",
+      "wallSeconds" : 9.73776195832761
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : " Ask what you can do for",
+      "wallSeconds" : 10.736403999995673
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : " Ask what you can do for your",
+      "wallSeconds" : 10.737779999995837
+    },
+    {
+      "audioThroughSeconds" : 10.7,
+      "final" : false,
+      "text" : " Ask what you can do for your country",
+      "wallSeconds" : 10.738386999997601
+    },
+    {
+      "audioThroughSeconds" : 11,
+      "final" : false,
+      "text" : " Ask what you can do for your country.",
+      "wallSeconds" : 11.053711916661996
+    },
+    {
+      "audioThroughSeconds" : 10.68,
+      "final" : true,
+      "text" : " Ask what you can do for your country.",
+      "wallSeconds" : 11.094682541661314
+    }
+  ],
+  "finalText" : "And so, my fellow Americans, ask not what your country can do for you.  Ask what you can do for your country.",
+  "finishSeconds" : 0.10575133333622944,
+  "language" : "en-US",
+  "loadSecondsIncludingDownload" : 0.18233049999980722
+}

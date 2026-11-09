@@ -125,4 +125,16 @@ final class ModelHostTests: XCTestCase {
             XCTAssertTrue(error is ModelHost<FakePipe>.HostError)
         }
     }
+
+    func testUnloadDropsThePipeAndTheNextUseLoadsAgain() async throws {
+        let host = makeHost(onDisk: ["base"])
+        await host.loadModel("base", downloadIfNeeded: false)
+        let first = try await host.awaitReady(timeout: 1)
+        host.unload()
+        XCTAssertEqual(host.state, .unloaded)
+        XCTAssertNil(host.loadedModel)
+        let second = try await host.awaitReady(timeout: 1)
+        XCTAssertFalse(first === second)
+        XCTAssertEqual(host.loadedModel, "base")
+    }
 }

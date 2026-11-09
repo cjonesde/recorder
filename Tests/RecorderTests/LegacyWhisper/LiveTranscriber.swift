@@ -1,3 +1,4 @@
+@testable import Recorder
 import Foundation
 import Observation
 import Accelerate
@@ -99,8 +100,7 @@ final class LiveTranscriber {
     }
 
     private func clearWindow() {
-        for i in windowSamples.indices { windowSamples[i] = 0 }
-        windowSamples.removeAll(keepingCapacity: false)
+        AudioMemory.discard(&windowSamples)
     }
 
     // MARK: Live session
@@ -171,12 +171,14 @@ final class LiveTranscriber {
         guard generation == sessionGeneration else {
             return LiveSessionResult(lines: snapshot, complete: false)
         }
+        inbox.discard()
+        clearWindow()
         return LiveSessionResult(lines: confirmedLines, complete: finalTickComplete)
     }
 
     func cancelSession() {
         sessionGeneration += 1
-        inbox.end()
+        inbox.discard()
         tickTask?.cancel()
         tickTask = nil
         isSessionActive = false

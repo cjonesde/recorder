@@ -1,0 +1,30 @@
+{
+  "audio" : "\/Users\/christopherjones\/projects\/cjonesde\/recorder\/Tools\/ASRBenchmark\/fixtures\/german.aiff",
+  "audioSeconds" : 16.938500000000001,
+  "backend" : "whisper",
+  "fallbacks" : 3,
+  "firstDecodeSeconds" : 0.45396304130554199,
+  "firstText" : "Guten Morgen! Wir besprechen heute die Planung für das nächste Projekt, die neue Anwendung soll sprachisch schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte.",
+  "language" : "auto",
+  "loadSecondsIncludingDownload" : 0.57775294780731201,
+  "model" : "openai_whisper-base",
+  "os" : "Version 27.2 (Build 26B123)",
+  "peakRSSBytes" : 113491968,
+  "physicalMemoryBytes" : 17179869184,
+  "warmDecodeSeconds" : [
+    0.39235901832580566,
+    0.39798402786254883,
+    0.42621195316314697,
+    0.44457507133483887,
+    0.42853593826293945
+  ],
+  "warmMedianSeconds" : 0.42621195316314697,
+  "warmRealtimeMultiplier" : 39.74196376776937,
+  "warmTexts" : [
+    "Guten Morgen! Wir besprechen heute die Planung für das nächste Projekt, die neue Anwendung soll sprachisch schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte.",
+    "Guten Morgen! Wir besprechen heute die Planung für das nächste Projekt, die neue Anwendung soll sprachisch schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte.",
+    "Guten Morgen! Wir besprechen heute die Planung für das nächste Projekt, die neue Anwendung soll sprachisch schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte.",
+    "Guten Morgen! Wir besprechen heute die Planung für das nächste Projekt, die neue Anwendung soll sprachisch schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte.",
+    "Guten Morgen! Wir besprechen heute die Planung für das nächste Projekt, die neue Anwendung soll sprachisch schnell und zuverlässig in Text umwandeln. Alle Aufnahmen bleiben auf diesem Computer. Am Freitag prüfen wir gemeinsam die Ergebnisse und entscheiden über die nächsten Schritte."
+  ]
+}

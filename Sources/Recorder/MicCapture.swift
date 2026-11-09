@@ -100,7 +100,7 @@ final class MicCapture {
         return queue
     }()
 
-    private static let tapBufferSize: AVAudioFrameCount = 4096
+    private static let tapBufferSize: AVAudioFrameCount = 1024
 
     private static let resampleCapacity: AVAudioFrameCount = 32_768
 
@@ -315,6 +315,11 @@ final class MicCapture {
             return
         }
         guard let src = monoSource.floatChannelData?[0] else { return }
+        defer {
+            if monoSource !== buffer, let owned = monoSource.floatChannelData?[0] {
+                AudioMemory.erase(owned, count: Int(monoSource.frameLength))
+            }
+        }
 
         guard let resampler, !resampler.isPassThrough,
               let scratch, let dst = scratch.floatChannelData?[0]
@@ -333,6 +338,7 @@ final class MicCapture {
             if written > 0 {
                 scratch.frameLength = AVAudioFrameCount(written)
                 write(scratch, hostTime: hostTime)
+                AudioMemory.erase(dst, count: written)
             }
             offset += chunk
         }
