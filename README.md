@@ -102,6 +102,68 @@ Voiceprints stay in `~/Library/Application Support/Recorder/Speakers/`, outside 
 
 Transcripts contain speaker names, meeting titles, invited attendees, and spoken content. They contain no voiceprint vectors, but can still contain personal information. Deleting voice data leaves names already written into transcripts intact.
 
+## Voice coach
+
+An optional prompter for your own voice during calls. Switch it on with the **Voice coach**
+switch in the panel or under Settings > Coach. It is off by default.
+
+While you record, a small bar sits under the camera, above slides and full-screen apps. It
+shows no text, only colour and shape:
+
+- **Dot:** green while you speak, blue while the other side speaks, purple when you talk over
+  them, gray in silence.
+- **Bar:** your energy, meaning your speaking level against your own usual level. It turns from
+  dull gray to warm orange as you speak with more energy.
+- **Tortoise:** lights for four seconds when you speak noticeably faster than your usual pace.
+
+Right-click the bar to pick a preset (Presentation, 1on1, Group) or hide it until the next
+recording. The preset starts from the calendar: no meeting or 8 and more attendees means
+Presentation, up to 2 means 1on1, otherwise Group. It is excluded from screen sharing
+(`sharingType = .none`, not yet tested in a real share).
+
+**It only listens to you while the other side is quiet.** Recorder has no echo cancellation,
+so on desk speakers the microphone also hears the call. The coach compares the microphone with
+the system audio, which is exactly what plays through the speakers, and ignores your microphone
+from 0.3 s before the other side makes sound until 0.5 s after it stops.
+
+**Everything except pace and energy runs silently at first.** "So" at the start of your
+sentences (English "so", German "so" and "also", Apple engine only), rising statement endings,
+trailing endings, raised pitch and level, talk share and interruptions are all measured and
+logged, but stay off the bar. A check can join the bar only after you labelled at least 20 of
+its moments and at least 90% were right. Raised pitch and level never joins the bar.
+
+**Half of the cues are skipped on purpose.** Each time a cue would light, a coin flip decides
+whether it shows. Some calls show no cues at all, more often as the weeks go on (every 5th of
+the first 10 calls, every 3rd up to 20, then every 2nd). The skipped moments are still logged,
+so you can later compare cued and uncued moments and see whether the cue changed anything.
+Switch this off under Settings > Coach.
+
+**Labelling.** Settings > Coach > Review flagged moments lists every flagged moment per
+recording, plays its clip and lets you mark it Right or False alarm. The same window shows each
+check's precision and lets you put it on the bar once it qualifies.
+
+Pace and energy are measured against your own baseline: the median of your last 10 recordings
+with at least 2 minutes of your speech, per language for pace and per microphone for level.
+Until 3 such recordings exist, the coach uses the current call once it has 2 minutes (pace) or
+30 seconds (energy) of your speech, and shows no pace cue before that.
+
+What it writes, all next to the recording:
+
+- `coach.jsonl`: one JSON line per event (session settings, once-per-second raw values per
+  check, every trigger with whether it was shown, withheld or shadow, clip decisions). No
+  transcript text and nothing about the other side beyond who spoke when.
+- `coach-clips/<id>.m4a`: 8 seconds of your microphone around each flagged moment, only in the
+  audio-keeping modes, and only when the other side was silent for the whole clip. Switching to
+  transcript only during the call deletes them.
+- `coach-labels.json`: your Right / False alarm labels.
+
+The baseline lives in `~/Library/Application Support/Recorder/coach-baseline.json`.
+
+Not settled yet: whether an own-voice baseline counts as a biometric profile, whether acoustic
+self-feedback falls under the EU AI Act's workplace emotion rules (Art. 5(1)(f)), and what notice
+turn-taking analysis needs. All three matter before this becomes a product. See
+`docs/2026-11-14-grill-live-voice-coach.md`.
+
 ## Other features
 
 - Calendar-aware recording names and a meeting-end notification.
@@ -148,6 +210,9 @@ audio.m4a        stereo AAC mix: desktop = L, mic = R (produced on Save; raw fil
 transcript.md    timestamped Markdown transcript (if transcription produced text)
 transcript.json  structured transcript, metadata, speaker IDs, and display names
 debug.json       numbers and events only, written while Show debug info is on
+coach.jsonl      voice coach events, written while the voice coach is on
+coach-clips/     voice coach clips of your own voice (audio-retaining modes)
+coach-labels.json  your labels for those clips
 ```
 
 In transcript-only mode, the folder contains only the transcript files (and `debug.json`
@@ -200,8 +265,10 @@ uv run --python 3.12 --with "numpy<2" --with praat-parselmouth==0.4.7 \
 Listen to each clip, write `rise`, `fall` or `level` in the `ear` column of `endings.csv`,
 then run `score`. It reads `scorable_share` from `endings.report.json`, which `analyze` writes
 next to the CSV. The verdict is "desk speakers usable" when at least 15 gated endings are
-marked, at least 0.8 of them agree, and at least half of the own speech is scorable.
-Otherwise it is "headset tool".
+marked, at least 0.8 of them agree, and at least half of the own speech is scorable. With
+15 or more marks and either condition missed, it is "headset tool". With fewer than 15 marked
+gated endings it says "needs ear marks", because too few marks are missing evidence, not a
+failed test. Record three real calls on desk speakers with **Keep audio** first.
 
 ## Main components
 
@@ -214,6 +281,8 @@ Otherwise it is "headset tool".
 | `LocalTranscriptionEngine` | Resident live engine selection and optional saved-file Whisper/SpeakerKit |
 | `DiagnosticsRecorder`, `DebugReport` | Debug drawer data and `debug.json` |
 | `StereoMixer` | Align and combine retained channel files |
+| `VoiceCoach` (target) | Dependency-free coach core: gate, detectors, cue policy, event log, clip planning |
+| `CoachAdapter`, `CoachHUDPanel`, `CoachReviewWindow` | Recorder glue for the coach: sample relay, log and clip files, floating bar, labelling |
 | `TranscriptDocument` | JSON source document and rendered Markdown |
 | `SpeakerProfileStore`, `SpeakerNaming` | Voice profiles, pending voiceprints, and speaker renaming |
 | `Tests/RecorderTests/LegacyWhisper` | Previous live pipeline retained only for regression benchmarks |
@@ -224,7 +293,7 @@ Otherwise it is "headset tool".
 - Voice-profile matching can misidentify speakers. You can correct their names in the transcript.
 - Re-encoding the kept raw files to Opus/`.ogg` (the raw `.caf` files make this lossless).
 - Continuous clock-drift slope correction for multi-hour recordings (sub-100 ms residual drift is acceptable for personal use).
-- Acoustic echo cancellation (assumes headphones; AEC would muddy the deliberate hard channel separation).
+- Acoustic echo cancellation (assumes headphones; AEC would muddy the deliberate hard channel separation). The voice coach gates on a quiet system audio tap instead; whether that is enough on desk speakers is what the speaker test decides.
 - Streaming model-based diarization (Speaker N labels updating live). Live labels are channel-based (You/Them); clustered per-voice labels currently require the offline pass over the saved file.
 
 ## License
