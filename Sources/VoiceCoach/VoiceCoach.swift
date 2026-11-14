@@ -43,6 +43,8 @@ public final class VoiceCoach {
     private var nextTick = 1.0
     private var gateCounts: [GateState: Int] = [:]
     private var scratch: [Float] = []
+    private var pace: PaceDetector
+    private var energy: EnergyMeter
 
     public init(config: CoachConfig, random: any RandomNumberGenerator = SystemRandomNumberGenerator()) {
         self.config = config
@@ -52,6 +54,8 @@ public final class VoiceCoach {
         desktopFrames = FrameAnalyzer(tuning: config.tuning)
         gate = OwnVoiceGate(tuning: config.tuning)
         pitch = PitchTracker(tuning: config.tuning)
+        pace = PaceDetector(tuning: config.tuning, baselineRate: config.baselineRate)
+        energy = EnergyMeter(baselineLevelDB: config.baselineLevelDB)
     }
 
     public func ingest(_ source: CoachSource, _ samples: UnsafeBufferPointer<Float>, sampleRate: Double) {
@@ -107,7 +111,7 @@ public final class VoiceCoach {
     }
 
     public func finish() -> CoachSessionSummary {
-        CoachSessionSummary(language: config.language, ownSpeechSeconds: ownSpeechSeconds, articulationRate: nil, levelDB: nil)
+        CoachSessionSummary(language: config.language, ownSpeechSeconds: ownSpeechSeconds, articulationRate: pace.sessionRateMedian, levelDB: energy.sessionLevelMedian)
     }
 
     private func time(of index: Int) -> Double { Double(index + 1) * tuning.frameSeconds }
@@ -153,7 +157,10 @@ public final class VoiceCoach {
         }
     }
 
-    private func observe(_ frame: FrameAnalysis) {}
+    private func observe(_ frame: FrameAnalysis) {
+        pace.observe(frame)
+        energy.observe(frame)
+    }
 
     private func observe(_ line: CoachLine) {}
 
@@ -167,6 +174,10 @@ public final class VoiceCoach {
             events.append(CoachEvent(t: t, kind: .sample, values: values, note: "gate"))
         }
         gateCounts.removeAll(keepingCapacity: true)
+        let paceTick = pace.tick(at: t, paceRatio: config.preset.paceRatio)
+        events.append(CoachEvent(t: t, kind: .sample, detector: .pace, values: paceTick.values, note: paceTick.note))
+        events.append(CoachEvent(t: t, kind: .sample, detector: .energy, values: energy.sample(at: t)))
+        if paceTick.trigger { fire(.pace, at: t, values: paceTick.values) }
     }
 
     @discardableResult
@@ -181,6 +192,7 @@ public final class VoiceCoach {
     private func hud(at t: Double) -> CoachHUDState {
         var state = CoachHUDState.idle(config.preset)
         state.gate = lastGate
+        state.energy = energy.value(at: t)
         state.litCues = Set(litUntil.filter { $0.value > t }.keys)
         return state
     }
