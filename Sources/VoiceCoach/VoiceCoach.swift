@@ -48,6 +48,8 @@ public final class VoiceCoach {
     private var sentenceStarts: SentenceStartCounter
     private var endings: EndingsDetector
     private var clipPlanner: ClipPlanner
+    private var prosody = ProsodyProxies()
+    private var turns: TurnTaking
 
     public init(config: CoachConfig, random: any RandomNumberGenerator = SystemRandomNumberGenerator()) {
         self.config = config
@@ -62,6 +64,7 @@ public final class VoiceCoach {
         sentenceStarts = SentenceStartCounter(language: config.language)
         endings = EndingsDetector(tuning: config.tuning)
         clipPlanner = ClipPlanner(tuning: config.tuning)
+        turns = TurnTaking(tuning: config.tuning)
     }
 
     public func ingest(_ source: CoachSource, _ samples: UnsafeBufferPointer<Float>, sampleRate: Double) {
@@ -173,9 +176,12 @@ public final class VoiceCoach {
     }
 
     private func observe(_ frame: FrameAnalysis) {
+        let syllablesBefore = pace.totalSyllables
         pace.observe(frame)
         energy.observe(frame)
         endings.observe(frame)
+        prosody.observe(frame, newPeak: pace.totalSyllables > syllablesBefore ? pace.lastPeak : nil)
+        turns.observe(t: frame.t, gate: frame.gate)
     }
 
     private func observe(_ line: CoachLine) {
@@ -210,6 +216,12 @@ public final class VoiceCoach {
         for detector in endingTriggers {
             fire(detector, at: t, values: detector == .risingEndings ? endings.risingSample() : endings.trailingSample())
         }
+        let rateRatio = pace.rate.flatMap { rate in pace.effectiveBaseline.map { rate / $0 } }
+        let prosodyTick = prosody.tick(at: t, levelOffsetDB: energy.offsetDB, rateRatio: rateRatio)
+        events.append(CoachEvent(t: t, kind: .sample, detector: .raisedVoice, values: prosodyTick.values))
+        if prosodyTick.trigger { fire(.raisedVoice, at: t, values: prosodyTick.values) }
+        events.append(CoachEvent(t: t, kind: .sample, detector: .talkShare, values: turns.talkShareSample()))
+        events.append(CoachEvent(t: t, kind: .sample, detector: .interruptions, values: turns.interruptionSample()))
     }
 
     @discardableResult
@@ -226,6 +238,10 @@ public final class VoiceCoach {
         var state = CoachHUDState.idle(config.preset)
         state.gate = lastGate
         state.energy = energy.value(at: t)
+        if config.isPromoted(.talkShare), let share = turns.talkShare {
+            state.talkShare = share
+            state.talkShareHigh = config.preset.talkShareHigh.map { share > $0 } ?? false
+        }
         state.litCues = Set(litUntil.filter { $0.value > t }.keys)
         return state
     }
