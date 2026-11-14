@@ -45,6 +45,7 @@ public final class VoiceCoach {
     private var scratch: [Float] = []
     private var pace: PaceDetector
     private var energy: EnergyMeter
+    private var sentenceStarts: SentenceStartCounter
 
     public init(config: CoachConfig, random: any RandomNumberGenerator = SystemRandomNumberGenerator()) {
         self.config = config
@@ -56,6 +57,7 @@ public final class VoiceCoach {
         pitch = PitchTracker(tuning: config.tuning)
         pace = PaceDetector(tuning: config.tuning, baselineRate: config.baselineRate)
         energy = EnergyMeter(baselineLevelDB: config.baselineLevelDB)
+        sentenceStarts = SentenceStartCounter(language: config.language)
     }
 
     public func ingest(_ source: CoachSource, _ samples: UnsafeBufferPointer<Float>, sampleRate: Double) {
@@ -162,7 +164,15 @@ public final class VoiceCoach {
         energy.observe(frame)
     }
 
-    private func observe(_ line: CoachLine) {}
+    private func observe(_ line: CoachLine) {
+        guard config.transcriptCues, line.isOwn else { return }
+        let result = sentenceStarts.observe(line)
+        guard result.sentences > 0 else { return }
+        let t = max(line.time, 0)
+        if sentenceStarts.shouldTrigger(at: max(t, lastTime)) {
+            fire(.soStarts, at: t, values: sentenceStarts.sample())
+        }
+    }
 
     private func tick(at t: Double) {
         let total = Double(gateCounts.values.reduce(0, +))
@@ -178,6 +188,7 @@ public final class VoiceCoach {
         events.append(CoachEvent(t: t, kind: .sample, detector: .pace, values: paceTick.values, note: paceTick.note))
         events.append(CoachEvent(t: t, kind: .sample, detector: .energy, values: energy.sample(at: t)))
         if paceTick.trigger { fire(.pace, at: t, values: paceTick.values) }
+        events.append(CoachEvent(t: t, kind: .sample, detector: .soStarts, values: sentenceStarts.sample(), note: config.transcriptCues ? nil : "engine lags"))
     }
 
     @discardableResult
@@ -185,7 +196,7 @@ public final class VoiceCoach {
         let decision = CuePolicy.decide(detector, config: config, random: &random)
         let id = "\(detector.rawValue)-\(Int((t * 1000).rounded()))"
         events.append(CoachEvent(t: t, kind: .trigger, detector: detector, values: values, shown: decision.shown, note: decision.note, id: id))
-        if decision.shown { litUntil[detector] = t + tuning.cueSeconds }
+        if decision.shown { litUntil[detector] = max(t, lastTime) + tuning.cueSeconds }
         return id
     }
 
