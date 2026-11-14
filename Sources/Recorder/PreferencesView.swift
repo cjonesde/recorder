@@ -328,6 +328,15 @@ private struct CoachPreferences: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Labels") {
+                Button("Review flagged moments…") {
+                    CoachReviewWindow.shared.show(model: model)
+                }
+                Text("Listen to the clips of flagged moments and mark each one right or a false alarm, ideally once a week. A check joins the HUD only when your labels show it is right nine times in ten.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }

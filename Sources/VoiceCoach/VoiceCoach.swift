@@ -47,6 +47,7 @@ public final class VoiceCoach {
     private var energy: EnergyMeter
     private var sentenceStarts: SentenceStartCounter
     private var endings: EndingsDetector
+    private var clipPlanner: ClipPlanner
 
     public init(config: CoachConfig, random: any RandomNumberGenerator = SystemRandomNumberGenerator()) {
         self.config = config
@@ -60,6 +61,7 @@ public final class VoiceCoach {
         energy = EnergyMeter(baselineLevelDB: config.baselineLevelDB)
         sentenceStarts = SentenceStartCounter(language: config.language)
         endings = EndingsDetector(tuning: config.tuning)
+        clipPlanner = ClipPlanner(tuning: config.tuning)
     }
 
     public func ingest(_ source: CoachSource, _ samples: UnsafeBufferPointer<Float>, sampleRate: Double) {
@@ -142,6 +144,15 @@ public final class VoiceCoach {
         lastGate = state
         lastTime = t
         observe(analysis)
+        for outcome in clipPlanner.observe(index: i, t: t, gate: state) {
+            switch outcome {
+            case .keep(let request):
+                clips.append(request)
+                events.append(CoachEvent(t: t, kind: .clip, detector: request.detector, values: ["start": request.start, "end": request.end], note: "planned", id: request.id))
+            case .skip(let id, let reason):
+                events.append(CoachEvent(t: t, kind: .clip, note: reason, id: id))
+            }
+        }
         if t >= nextTick - 1e-9 {
             tick(at: t)
             nextTick += 1
@@ -207,6 +218,7 @@ public final class VoiceCoach {
         let id = "\(detector.rawValue)-\(Int((t * 1000).rounded()))"
         events.append(CoachEvent(t: t, kind: .trigger, detector: detector, values: values, shown: decision.shown, note: decision.note, id: id))
         if decision.shown { litUntil[detector] = max(t, lastTime) + tuning.cueSeconds }
+        clipPlanner.register(id: id, detector: detector, at: t)
         return id
     }
 

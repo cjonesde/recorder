@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import Recorder
 import VoiceCoach
@@ -119,5 +120,48 @@ final class CoachAdapterTests: XCTestCase {
         XCTAssertFalse(controller.isActive)
         XCTAssertNil(controller.relay.current)
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.baselineURL.path))
+    }
+
+    private func fastTalk() -> (mic: [Float], desktop: [Float]) {
+        (quiet(seconds: 1) + harmonicVoice(seconds: 14, syllables: 6), quiet(seconds: 15.5))
+    }
+
+    private func clipFiles() -> [URL] {
+        (try? FileManager.default.contentsOfDirectory(at: folder.appendingPathComponent(CoachPump.clipsFolderName), includingPropertiesForKeys: nil)) ?? []
+    }
+
+    func testTranscriptOnlyWritesNoClips() throws {
+        let pump = pump({ $0.baselineRate = 4 }, retainsAudio: false)
+        let audio = fastTalk()
+        push(pump, mic: audio.mic, desktop: audio.desktop)
+        _ = pump.stop()
+        let events = try events()
+        XCTAssertFalse(events.filter { $0.kind == .trigger }.isEmpty)
+        XCTAssertTrue(events.contains { $0.kind == .clip && $0.note == "transcript only" })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent(CoachPump.clipsFolderName).path))
+    }
+
+    func testClipFileHoldsEightSeconds() throws {
+        let pump = pump({ $0.baselineRate = 4 }, retainsAudio: true)
+        let audio = fastTalk()
+        push(pump, mic: audio.mic, desktop: audio.desktop)
+        _ = pump.stop()
+        let trigger = try XCTUnwrap(try events().first { $0.kind == .trigger })
+        let clip = try XCTUnwrap(clipFiles().first)
+        XCTAssertEqual(clip.deletingPathExtension().lastPathComponent, trigger.id)
+        let file = try AVAudioFile(forReading: clip)
+        let seconds = Double(file.length) / file.fileFormat.sampleRate
+        XCTAssertEqual(seconds, 8, accuracy: 0.1)
+    }
+
+    func testDowngradeDeletesClips() throws {
+        let pump = pump({ $0.baselineRate = 4 }, retainsAudio: true)
+        let audio = fastTalk()
+        push(pump, mic: audio.mic, desktop: audio.desktop)
+        XCTAssertFalse(clipFiles().isEmpty)
+        pump.audioRetentionChanged(retains: false)
+        pump.drainNow()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent(CoachPump.clipsFolderName).path))
+        _ = pump.stop()
     }
 }
