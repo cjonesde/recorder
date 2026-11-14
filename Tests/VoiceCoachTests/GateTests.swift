@@ -75,8 +75,4 @@ final class GateTests: XCTestCase {
         for _ in 0..<1000 { _ = gate.classify(micDB: -30, desktopDB: [-20], currentDesktopDB: -20) }
         XCTAssertEqual(gate.micFloorDB, before, accuracy: 0.01)
     }
-
-    func testDesktopStallMarksUnknownAfterTwoSeconds() throws {
-        throw XCTSkip("engine-level, enabled in VoiceCoachEngineTests")
-    }
 }

@@ -1,6 +1,8 @@
 import Foundation
 
-func median(_ values: [Double]) -> Double? {
+func median(_ values: [Double]) -> Double? { sortedMedian(values) }
+
+func sortedMedian(_ values: [Double]) -> Double? {
     guard !values.isEmpty else { return nil }
     let sorted = values.sorted()
     let middle = sorted.count / 2
@@ -35,7 +37,7 @@ struct RollingWindow {
 
     var values: [Double] { Array(storage[head...] + storage[..<head]) }
 
-    var median: Double? { VoiceCoach.median(storage) }
+    var median: Double? { sortedMedian(storage) }
 
     var mean: Double? { storage.isEmpty ? nil : storage.reduce(0, +) / Double(storage.count) }
 }

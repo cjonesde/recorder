@@ -31,3 +31,23 @@ public struct CoachTuning: Sendable, Equatable {
 
     func frames(_ seconds: Double) -> Int { Int((seconds / frameSeconds).rounded()) }
 }
+
+public struct CoachConfig: Sendable, Equatable {
+    public var language: String
+    public var preset: CoachPreset = .presentation
+    public var promoted: Set<DetectorID> = [.pace]
+    public var withholding = true
+    public var cueOffSession = false
+    public var transcriptCues = false
+    public var baselineRate: Double?
+    public var baselineLevelDB: Double?
+    public var tuning: CoachTuning = .default
+
+    public init(language: String) {
+        self.language = language
+    }
+
+    public func isPromoted(_ detector: DetectorID) -> Bool {
+        detector.isPromotable && promoted.contains(detector)
+    }
+}
