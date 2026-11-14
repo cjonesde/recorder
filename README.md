@@ -180,6 +180,29 @@ session lifecycle, memory ownership, error behavior, and verification gaps. The
 The older [capture research](docs/research-notes.md) is retained as historical context;
 its transcription and default-retention descriptions have been superseded.
 
+### Voice coach speaker test
+
+Step 0 of the voice coach checks whether pace and statement endings survive desk speaker
+bleed. It reads a kept `audio.m4a` (desktop left, mic right), gates the mic on a quiet
+system audio tap, and runs the intonation code from `coach.py` (pass `--coach <path>` if it
+is not in the default location). Run from the repository root:
+
+```sh
+uv run --python 3.12 --with "numpy<2" --with praat-parselmouth==0.4.7 --with pytest \
+  python -m pytest Tools/SpeakerTest -q
+uv run --python 3.12 --with "numpy<2" --with praat-parselmouth==0.4.7 \
+  python Tools/SpeakerTest/speaker_test.py analyze ~/Documents/Recordings/<folder>/audio.m4a \
+  --csv endings.csv --clips clips
+uv run --python 3.12 --with "numpy<2" --with praat-parselmouth==0.4.7 \
+  python Tools/SpeakerTest/speaker_test.py score endings.csv
+```
+
+Listen to each clip, write `rise`, `fall` or `level` in the `ear` column of `endings.csv`,
+then run `score`. It reads `scorable_share` from `endings.report.json`, which `analyze` writes
+next to the CSV. The verdict is "desk speakers usable" when at least 15 gated endings are
+marked, at least 0.8 of them agree, and at least half of the own speech is scorable.
+Otherwise it is "headset tool".
+
 ## Main components
 
 | Component | Responsibility |
