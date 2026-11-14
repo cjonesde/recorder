@@ -21,3 +21,14 @@ public enum CoachPreset: String, Codable, CaseIterable, Sendable {
         }
     }
 }
+
+extension CoachPreset {
+    public static func pick(attendeeCount: Int?) -> CoachPreset {
+        guard let attendeeCount else { return .presentation }
+        switch attendeeCount {
+        case ...2: return .oneOnOne
+        case 3...7: return .group
+        default: return .presentation
+        }
+    }
+}

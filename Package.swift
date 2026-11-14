@@ -31,7 +31,7 @@ let package = Package(
         ),
         .testTarget(
             name: "RecorderTests",
-            dependencies: ["Recorder"],
+            dependencies: ["Recorder", "VoiceCoach"],
             path: "Tests/RecorderTests"
         ),
         .testTarget(

@@ -44,6 +44,8 @@ struct RecorderPanel: View {
 
             audioHandlingChip
 
+            coachControls
+
             if model.isCapturing && !model.audioHandlingMode.retainsAudio {
                 Label("Transcript only, no audio saved", systemImage: "eye.slash")
                     .font(.caption2)
@@ -154,6 +156,26 @@ struct RecorderPanel: View {
     }
 
     // MARK: - 2. Primary controls
+
+    @ViewBuilder
+    private var coachControls: some View {
+        if model.state == .idle {
+            Toggle(isOn: Binding(get: { model.coachEnabled }, set: { model.coachEnabled = $0 })) {
+                Label("Voice coach", systemImage: "gauge.with.dots.needle.33percent")
+                    .font(.caption)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+        } else if model.coach.isActive && model.coach.hiddenForSession {
+            Button {
+                model.coach.showAgain()
+            } label: {
+                Label("Show voice coach", systemImage: "gauge.with.dots.needle.33percent")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+        }
+    }
 
     private var audioHandlingChip: some View {
         Menu {
