@@ -22,7 +22,8 @@ GATE_HANGOVER = 0.5
 OVERLAP_MARGIN_DB = 6.0
 SPEECH_ABOVE_FLOOR_DB = 10.0
 SPEECH_MIN_DB = -60.0
-FLOOR_PERCENTILE = 10
+FLOOR_RISE_DB_PER_SECOND = 0.5
+FLOOR_START_DB = -120.0
 
 LEVEL_HOP = 160
 LEVEL_FRAME = 480
@@ -106,18 +107,33 @@ def tap_quiet_mask(desktop_db: np.ndarray, quiet_db: float = TAP_QUIET_DB, lead:
     return (counts[hi] - counts[lo]) == 0
 
 
-def speech_mask(level_db: np.ndarray) -> np.ndarray:
+def tracking_floor(level_db: np.ndarray, frame_seconds: float, frozen: np.ndarray | None = None) -> np.ndarray:
+    floor = np.empty(len(level_db))
+    rise = FLOOR_RISE_DB_PER_SECOND * frame_seconds
+    current = None
+    for index, value in enumerate(level_db):
+        if frozen is None or not frozen[index]:
+            if current is None or value < current:
+                current = float(value)
+            else:
+                current += rise
+        floor[index] = FLOOR_START_DB if current is None else current
+    return floor
+
+
+def speech_mask(level_db: np.ndarray, frozen: np.ndarray | None = None) -> np.ndarray:
     if level_db.size == 0:
         return np.zeros(0, bool)
-    floor = float(np.percentile(level_db, FLOOR_PERCENTILE))
-    return level_db > max(floor + SPEECH_ABOVE_FLOOR_DB, SPEECH_MIN_DB)
+    floor = tracking_floor(level_db, WINDOW, frozen)
+    return level_db > np.maximum(floor + SPEECH_ABOVE_FLOOR_DB, SPEECH_MIN_DB)
 
 
 def own_speech_mask(desktop_db: np.ndarray, mic_db: np.ndarray) -> np.ndarray:
     count = min(len(desktop_db), len(mic_db))
     desktop_db, mic_db = desktop_db[:count], mic_db[:count]
     tap_active = desktop_db > TAP_QUIET_DB
-    return speech_mask(mic_db) & (~tap_active | (mic_db > desktop_db + OVERLAP_MARGIN_DB))
+    tap_near = ~tap_quiet_mask(desktop_db)
+    return speech_mask(mic_db, tap_near) & (~tap_active | (mic_db > desktop_db + OVERLAP_MARGIN_DB))
 
 
 def envelope_db(pcm: np.ndarray) -> np.ndarray:
@@ -204,15 +220,15 @@ def hysteresis_peaks(level_db: np.ndarray, hysteresis: float = NUCLEUS_HYSTERESI
     return peaks
 
 
-def syllable_nuclei(level_db: np.ndarray, voiced_times: np.ndarray) -> list[float]:
+def syllable_nuclei(level_db: np.ndarray, voiced_times: np.ndarray, frozen: np.ndarray | None = None) -> list[float]:
     if level_db.size == 0:
         return []
-    floor = float(np.percentile(level_db, FLOOR_PERCENTILE))
+    floor = tracking_floor(level_db, LEVEL_HOP / RATE, frozen)
     times = level_contour_times(len(level_db))
     voiced_times = np.sort(np.asarray(voiced_times, dtype=np.float64))
     nuclei = []
     for index in hysteresis_peaks(level_db):
-        if level_db[index] <= floor + SPEECH_ABOVE_FLOOR_DB:
+        if level_db[index] <= max(floor[index] + SPEECH_ABOVE_FLOOR_DB, SPEECH_MIN_DB):
             continue
         t = times[index]
         lo = np.searchsorted(voiced_times, t - NUCLEUS_VOICED_TOLERANCE, side="left")
@@ -252,12 +268,14 @@ def analyze_pcm(desktop: np.ndarray, mic: np.ndarray, coach) -> dict:
     desktop_db = window_db(desktop)
     mic_db = window_db(mic)
     quiet = tap_quiet_mask(desktop_db)
-    speech = speech_mask(mic_db)
+    speech = speech_mask(mic_db, ~quiet)
     own = own_speech_mask(desktop_db, mic_db)
     own_quiet = own & quiet
     track = coach.pitch_track(mic)
     voiced = np.asarray(track[0])[track[1] > 0] if track is not None else np.zeros(0)
-    nuclei = syllable_nuclei(level_contour(mic), voiced)
+    contour = level_contour(mic)
+    contour_frozen = np.array([not mask_at(quiet, t) for t in level_contour_times(len(contour))], dtype=bool)
+    nuclei = syllable_nuclei(contour, voiced, contour_frozen)
     gated_nuclei = [t for t in nuclei if mask_at(quiet, t)]
     stats = coach.audio_stats(mic)
     phrase_ends = []

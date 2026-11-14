@@ -527,7 +527,7 @@ final class RecorderModel {
     func saveAndStop() {
         guard isCapturing, let session = currentSession else { return }
 
-        coach.stop()
+        let coachSummary = coach.stop()
         let desktopResult = tap.stop()
         let micResult = mic.stop()
 
@@ -583,6 +583,9 @@ final class RecorderModel {
                 guard let liveResult = await liveTask?.value, !liveResult.isEmpty else {
                     self.transcriptionState = .failed("Nothing was transcribed, and no audio was kept.")
                     self.statusMessage = "Nothing to save"
+                    if let coachSummary, coachSummary.ownSpeechSeconds < CoachController.keepLogOwnSeconds {
+                        CoachController.removeArtifacts(in: folderURL)
+                    }
                     if diagnostics == nil { Self.removeFolderIfEmpty(folderURL) }
                     self.refreshRecordings()
                     return

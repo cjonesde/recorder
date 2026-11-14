@@ -322,3 +322,14 @@ Run everything with `uv run --python 3.12 --with "numpy<2" --with praat-parselmo
 ## Deferred (from the spec)
 
 Pace matching, a preset editor, the port to schriftlich.app, volume matching and live room balance (cut), Apple voice processing (rejected: its gain control distorts loudness).
+
+## Deviations from this plan (as built)
+
+- **Gate floor** is frozen while the tap is near, instead of updating on every frame, so bleed cannot raise his speech threshold. `speaker_test.py` uses the same rule.
+- **Desktop realignment** (added after review): the engine compares produced mic and desktop frames whenever desktop audio arrives. A deficit above 0.5 s, or a steady one above 0.2 s, is filled with placeholder frames that read as `.unknown`; a steady surplus is trimmed. Logged as `gap` events with note `system audio realigned`.
+- **Staleness:** pace ticks only with own speech in the last 1 s (`"not speaking"` otherwise) and keeps at most 3600 rate samples; ending triggers need a phrase committed since the last trigger and within the last 5 s.
+- **HUD** is 196 x 30 pt with a 72 pt energy bar and 17 pt cue slots, because the tortoise glyph overflowed 12 pt slots.
+- **Preset events:** the starting preset is in the `session` event note; overrides log `preset` with note `override <preset>`.
+- **Talk share** can be shown without labels: it has no trigger events to label.
+- **Speaker test verdict:** under 15 marked gated endings reports `needs ear marks` instead of `headset tool`.
+- **Nothing to save:** when a transcript-only recording produced nothing and the coach heard under 5 s of his speech, the coach files are removed too, so the empty folder still disappears.

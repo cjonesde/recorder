@@ -76,8 +76,12 @@ final class CoachAdapterTests: XCTestCase {
     func testStopIsSynchronousBeforeFolderRemoval() throws {
         let pump = pump()
         pump.start()
-        push(pump, mic: harmonicVoice(seconds: 1, syllables: 4), desktop: quiet(seconds: 1))
+        let mic = harmonicVoice(seconds: 2.5, syllables: 4)
+        let desktop = quiet(seconds: 2.5)
+        mic.withUnsafeBufferPointer { pump.ingest(.mic, $0.baseAddress!, count: $0.count, rate: 48_000) }
+        desktop.withUnsafeBufferPointer { pump.ingest(.desktop, $0.baseAddress!, count: $0.count, rate: 48_000) }
         _ = pump.stop()
+        XCTAssertEqual(try events().filter { $0.kind == .sample && $0.note == "gate" }.count, 2)
         try FileManager.default.removeItem(at: folder)
         let settled = expectation(description: "timer would have fired")
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { settled.fulfill() }
@@ -85,11 +89,29 @@ final class CoachAdapterTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
     }
 
-    func testRelayIgnoresSamplesWithoutPump() {
+    func testRelayStopsForwardingWhenCleared() throws {
         let relay = CoachRelay()
-        let samples = [Float](repeating: 0.1, count: 480)
-        samples.withUnsafeBufferPointer { relay.ingest(.mic, $0.baseAddress!, count: 480, rate: 48_000) }
+        let pump = pump()
+        relay.set(pump)
+        let first = harmonicVoice(seconds: 2.5, syllables: 4)
+        let firstQuiet = quiet(seconds: 2.5)
+        first.withUnsafeBufferPointer { relay.ingest(.mic, $0.baseAddress!, count: $0.count, rate: 48_000) }
+        firstQuiet.withUnsafeBufferPointer { relay.ingest(.desktop, $0.baseAddress!, count: $0.count, rate: 48_000) }
+        relay.set(nil)
+        let more = harmonicVoice(seconds: 3, syllables: 4)
+        let moreQuiet = quiet(seconds: 3)
+        more.withUnsafeBufferPointer { relay.ingest(.mic, $0.baseAddress!, count: $0.count, rate: 48_000) }
+        moreQuiet.withUnsafeBufferPointer { relay.ingest(.desktop, $0.baseAddress!, count: $0.count, rate: 48_000) }
+        _ = pump.stop()
         XCTAssertNil(relay.current)
+        XCTAssertEqual(try events().filter { $0.kind == .sample && $0.note == "gate" }.count, 2)
+    }
+
+    @MainActor
+    func testEmptyCoachLogIsRemovedWithNothingToSave() throws {
+        try Data("{}".utf8).write(to: folder.appendingPathComponent(CoachPump.logName))
+        CoachController.removeArtifacts(in: folder)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
     }
 
     func testControllerDisabledByDefault() {

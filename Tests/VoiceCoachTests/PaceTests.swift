@@ -50,8 +50,8 @@ final class PaceTests: XCTestCase {
     }
 
     func testTriggersWhenFasterThanBaseline() {
-        let audio = talk(25, syllables: 6)
-        let run = feed(makeCoach { $0.baselineRate = 4.0 }, mic: audio, desktop: quietDesktop(seconds: 26))
+        let audio = talk(36, syllables: 6)
+        let run = feed(makeCoach { $0.baselineRate = 4.0 }, mic: audio, desktop: quietDesktop(seconds: 37))
         let triggers = run.triggers(.pace)
         XCTAssertEqual(triggers.count, 1)
         XCTAssertLessThan(triggers.first?.t ?? 99, 15)

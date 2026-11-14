@@ -7,7 +7,10 @@ import VoiceCoach
 final class CoachHUDSnapshotTests: XCTestCase {
     @MainActor
     func testRenderHUDStates() throws {
-        let target = try XCTUnwrap(ProcessInfo.processInfo.environment["RECORDER_COACH_SNAPSHOT"].map { URL(fileURLWithPath: $0) }, "set RECORDER_COACH_SNAPSHOT to a folder to render the HUD")
+        guard let path = ProcessInfo.processInfo.environment["RECORDER_COACH_SNAPSHOT"] else {
+            throw XCTSkip("set RECORDER_COACH_SNAPSHOT to a folder to render the HUD")
+        }
+        let target = URL(fileURLWithPath: path)
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         var idle = CoachHUDState.idle(.oneOnOne)
         idle.gate = .silence

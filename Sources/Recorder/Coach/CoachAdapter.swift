@@ -237,8 +237,11 @@ final class CoachController {
         config.baselineRate = store.baseline.rate(language: language)
         config.baselineLevelDB = store.baseline.level(mic: micName)
         let pump = CoachPump(folder: folder, config: config, retainsAudio: retainsAudio)
-        pump.onHUD = { [weak self] state in
-            Task { @MainActor in self?.hud = state }
+        pump.onHUD = { [weak self, weak pump] state in
+            Task { @MainActor in
+                guard let self, let pump, self.pump === pump else { return }
+                self.hud = state
+            }
         }
         self.pump = pump
         self.lines = lines
@@ -256,8 +259,17 @@ final class CoachController {
         if showsPanel { CoachHUDPanel.shared.show(controller: self) }
     }
 
-    func stop(discard: Bool = false) {
-        guard isActive, let pump else { return }
+    static let keepLogOwnSeconds = 5.0
+
+    static func removeArtifacts(in folder: URL) {
+        for name in [CoachPump.logName, CoachPump.clipsFolderName, CoachLabels.fileName] {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
+    }
+
+    @discardableResult
+    func stop(discard: Bool = false) -> CoachSessionSummary? {
+        guard isActive, let pump else { return nil }
         relay.set(nil)
         lineTimer?.invalidate()
         lineTimer = nil
@@ -272,6 +284,7 @@ final class CoachController {
         isActive = false
         hud = nil
         CoachHUDPanel.shared.close()
+        return summary
     }
 
     func setPaused(_ paused: Bool) {

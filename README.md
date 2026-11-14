@@ -130,7 +130,9 @@ from 0.3 s before the other side makes sound until 0.5 s after it stops.
 sentences (English "so", German "so" and "also", Apple engine only), rising statement endings,
 trailing endings, raised pitch and level, talk share and interruptions are all measured and
 logged, but stay off the bar. A check can join the bar only after you labelled at least 20 of
-its moments and at least 90% were right. Raised pitch and level never joins the bar.
+its moments and at least 90% were right. Raised pitch and level never joins the bar. Talk share
+is the exception: it is a measurement, not an alarm, so it has no moments to label, and you can
+show it as a ring around the dot whenever you like.
 
 **Half of the cues are skipped on purpose.** Each time a cue would light, a coin flip decides
 whether it shows. Some calls show no cues at all, more often as the weeks go on (every 5th of
@@ -141,6 +143,11 @@ Switch this off under Settings > Coach.
 **Labelling.** Settings > Coach > Review flagged moments lists every flagged moment per
 recording, plays its clip and lets you mark it Right or False alarm. The same window shows each
 check's precision and lets you put it on the bar once it qualifies.
+
+Pace only counts while you are actually speaking, and the ending checks only fire on a fresh
+phrase, so a cue never lights while you listen. If the system audio drops out (macOS rebuilds the
+audio tap now and then), the coach notices the missing stretch, scores it as unknown and lines the
+two streams up again.
 
 Pace and energy are measured against your own baseline: the median of your last 10 recordings
 with at least 2 minutes of your speech, per language for pace and per microphone for level.
