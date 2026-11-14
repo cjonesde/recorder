@@ -45,7 +45,8 @@ final class PaceTests: XCTestCase {
         let audio = talk(100, syllables: 7)
         let run = feed(makeCoach(), mic: audio, desktop: quietDesktop(seconds: 101))
         XCTAssertTrue(run.triggers(.pace).isEmpty)
-        XCTAssertTrue(run.samples(.pace).allSatisfy { $0.note == "no baseline" })
+        XCTAssertTrue(run.samples(.pace).allSatisfy { $0.values["ratio"] == nil })
+        XCTAssertTrue(run.samples(.pace).contains { $0.note == "no baseline" })
     }
 
     func testTriggersWhenFasterThanBaseline() {

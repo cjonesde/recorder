@@ -19,7 +19,7 @@ func makeCoach(_ configure: (inout CoachConfig) -> Void = { _ in }, seed: UInt64
 }
 
 @discardableResult
-func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, chunk: Int = 4800, lines: [CoachLine] = [], into run: inout CoachRun) -> CoachRun {
+func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, chunk: Int = 4800, lines: [CoachLine] = [], desktopGaps: [ClosedRange<Double>] = [], into run: inout CoachRun) -> CoachRun {
     var pendingLines = lines.sorted { $0.time < $1.time }
     var offset = 0
     let total = max(mic.count, desktop?.count ?? 0)
@@ -28,7 +28,9 @@ func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 4
         if offset < mic.count {
             mic[offset..<min(end, mic.count)].withUnsafeBufferPointer { coach.ingest(.mic, $0, sampleRate: rate) }
         }
-        if let desktop, offset < desktop.count {
+        let chunkStart = Double(offset) / rate
+        let dropped = desktopGaps.contains { $0.contains(chunkStart) }
+        if let desktop, offset < desktop.count, !dropped {
             desktop[offset..<min(end, desktop.count)].withUnsafeBufferPointer { coach.ingest(.desktop, $0, sampleRate: rate) }
         }
         let now = Double(end) / rate
@@ -45,9 +47,16 @@ func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 4
     return run
 }
 
-func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, lines: [CoachLine] = []) -> CoachRun {
+func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, lines: [CoachLine] = [], desktopGaps: [ClosedRange<Double>] = []) -> CoachRun {
     var run = CoachRun()
-    return feed(coach, mic: mic, desktop: desktop, rate: rate, lines: lines, into: &run)
+    let chunk = Int(rate / 10)
+    return feed(coach, mic: mic, desktop: desktop, rate: rate, chunk: chunk, lines: lines, desktopGaps: desktopGaps, into: &run)
+}
+
+extension CoachRun {
+    func gateShares(from start: Double, to end: Double) -> [CoachEvent] {
+        events.filter { $0.kind == .sample && $0.note == "gate" && $0.t > start && $0.t <= end }
+    }
 }
 
 func quietDesktop(seconds: Double, rate: Double = 48_000) -> [Float] {

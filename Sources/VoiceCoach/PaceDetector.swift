@@ -15,6 +15,8 @@ struct PaceDetector {
     static let consecutiveTicks = 3
     static let refractory = 30.0
     static let sessionBaselineSeconds = 120.0
+    static let speakingRecency = 1.0
+    static let historyLimit = 3600
 
     let tuning: CoachTuning
     let baselineRate: Double?
@@ -140,10 +142,21 @@ struct PaceDetector {
         lastPeak = SyllablePeak(t: extremeT, db: extreme, riseDB: rise)
     }
 
+    func isSpeaking(at t: Double) -> Bool {
+        guard let lastOwnT else { return false }
+        return t - lastOwnT <= Self.speakingRecency
+    }
+
     mutating func tick(at t: Double, paceRatio: Double) -> (trigger: Bool, values: [String: Double], note: String?) {
         var values: [String: Double] = [:]
+        guard isSpeaking(at: t) else {
+            aboveCount = 0
+            if let baseline = effectiveBaseline { values["baseline"] = baseline }
+            return (false, values, "not speaking")
+        }
         if let rate {
             rateHistory.append(rate)
+            if rateHistory.count > Self.historyLimit { rateHistory.removeFirst(rateHistory.count - Self.historyLimit) }
             values["rate"] = rate
         }
         guard let baseline = effectiveBaseline, baseline > 0 else {

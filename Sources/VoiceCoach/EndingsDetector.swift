@@ -23,6 +23,7 @@ struct EndingsDetector {
     static let trailingSpan = 0.3
     static let refractory = 45.0
     static let historySeconds = 3.0
+    static let freshness = 5.0
 
     private struct Frame {
         let t: Double
@@ -45,6 +46,10 @@ struct EndingsDetector {
     private var questionLines: [Double] = []
     private var lastRising = -Double.infinity
     private var lastTrailing = -Double.infinity
+    private var committed = 0
+    private var committedAtRising = 0
+    private var committedAtTrailing = 0
+    private var lastCommit = -Double.infinity
 
     init(tuning: CoachTuning) {
         self.tuning = tuning
@@ -121,17 +126,22 @@ struct EndingsDetector {
                 questions += 1
             } else {
                 recent.append(ending)
+                committed += 1
+                lastCommit = t
             }
         }
         if recent.count > Self.window { recent.removeFirst(recent.count - Self.window) }
         var fired: [DetectorID] = []
+        guard t - lastCommit <= Self.freshness else { return fired }
         let measured = recent.filter { $0.contour != .unmeasured }
-        if measured.count >= Self.minimumMeasured, let rate = risingRate, rate > Self.risingThreshold, t - lastRising >= Self.refractory {
+        if committed > committedAtRising, measured.count >= Self.minimumMeasured, let rate = risingRate, rate > Self.risingThreshold, t - lastRising >= Self.refractory {
             lastRising = t
+            committedAtRising = committed
             fired.append(.risingEndings)
         }
-        if recent.filter(\.trailing).count >= Self.trailingCount, t - lastTrailing >= Self.refractory {
+        if committed > committedAtTrailing, recent.filter(\.trailing).count >= Self.trailingCount, t - lastTrailing >= Self.refractory {
             lastTrailing = t
+            committedAtTrailing = committed
             fired.append(.trailingEndings)
         }
         return fired

@@ -31,6 +31,7 @@ public final class VoiceCoach {
     private var pendingHead = 0
     private var desktopLevels: [Double] = []
     private var desktopBase = 0
+    private var deficits: [Int] = []
     private var gate: OwnVoiceGate
     private let pitch: PitchTracker
     private var events: [CoachEvent] = []
@@ -75,8 +76,42 @@ public final class VoiceCoach {
             pendingMic.append(contentsOf: micFrames.push(scratch))
         case .desktop:
             desktopDownsampler.process(samples, rate: sampleRate, into: &scratch)
-            for frame in desktopFrames.push(scratch) { desktopLevels.append(frame.db) }
+            let frames = desktopFrames.push(scratch)
+            for frame in frames { desktopLevels.append(frame.db) }
+            if !frames.isEmpty { realignDesktop() }
         }
+    }
+
+    static let immediateRealignFrames = 50
+    static let steadyRealignFrames = 20
+    static let realignSlackFrames = 5
+    static let deficitWindow = 20
+
+    private var desktopAligned: Int { desktopBase + desktopLevels.count }
+
+    private func realignDesktop() {
+        let deficit = micFrames.framesProduced - desktopAligned
+        deficits.append(deficit)
+        if deficits.count > Self.deficitWindow { deficits.removeFirst(deficits.count - Self.deficitWindow) }
+        var shift = 0
+        if deficit > Self.immediateRealignFrames {
+            shift = deficit - Self.realignSlackFrames
+        } else if deficits.count >= Self.deficitWindow / 2, let low = deficits.min(), low > Self.steadyRealignFrames {
+            shift = low - Self.realignSlackFrames
+        } else if deficits.count >= Self.deficitWindow / 2, let high = deficits.max(), high < -Self.steadyRealignFrames {
+            let consumedThrough = (pendingHead < pendingMic.count ? pendingMic[pendingHead].index : micFrames.framesProduced) + tuning.leadFrames
+            let removable = max(0, desktopAligned - consumedThrough - 1)
+            shift = -min(-high - Self.realignSlackFrames, removable)
+        }
+        guard shift != 0 else { return }
+        if shift > 0 {
+            desktopLevels.append(contentsOf: repeatElement(.nan, count: shift))
+        } else {
+            desktopLevels.removeLast(-shift)
+        }
+        deficits.removeAll()
+        let seconds = Double(shift) * tuning.frameSeconds
+        events.append(CoachEvent(t: lastTime, kind: .gap, values: ["shift": seconds], note: String(format: "system audio realigned %+.2f s", seconds)))
     }
 
     public func ingest(_ line: CoachLine) {
@@ -95,7 +130,7 @@ public final class VoiceCoach {
             events.append(sessionEvent())
         }
         let leadFrames = tuning.leadFrames
-        let desktopCount = desktopFrames.framesProduced
+        let desktopCount = desktopAligned
         let micLatest = micFrames.framesProduced
         while pendingHead < pendingMic.count {
             let frame = pendingMic[pendingHead]
@@ -128,7 +163,7 @@ public final class VoiceCoach {
     private func desktopLevel(_ index: Int) -> Double? {
         if index < 0 { return FrameAnalyzer.floorDB }
         let offset = index - desktopBase
-        guard offset >= 0, offset < desktopLevels.count else { return nil }
+        guard offset >= 0, offset < desktopLevels.count, !desktopLevels[offset].isNaN else { return nil }
         return desktopLevels[offset]
     }
 
@@ -162,16 +197,19 @@ public final class VoiceCoach {
         }
     }
 
+    static let desktopRetainedFrames = 6000
+
     private func compact() {
         if pendingHead > 4096 {
             pendingMic.removeFirst(pendingHead)
             pendingHead = 0
         }
-        let keepFrom = (pendingHead < pendingMic.count ? pendingMic[pendingHead].index : micFrames.framesProduced) - tuning.hangoverFrames - 1
-        let drop = keepFrom - desktopBase
+        let nextMic = pendingHead < pendingMic.count ? pendingMic[pendingHead].index : micFrames.framesProduced
+        let keepFrom = min(nextMic, desktopAligned - Self.desktopRetainedFrames) - tuning.hangoverFrames - 1
+        let drop = min(keepFrom - desktopBase, desktopLevels.count)
         if drop > 4096 {
-            desktopLevels.removeFirst(min(drop, desktopLevels.count))
-            desktopBase += min(drop, desktopLevels.count)
+            desktopLevels.removeFirst(drop)
+            desktopBase += drop
         }
     }
 
