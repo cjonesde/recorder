@@ -46,6 +46,7 @@ public final class VoiceCoach {
     private var pace: PaceDetector
     private var energy: EnergyMeter
     private var sentenceStarts: SentenceStartCounter
+    private var endings: EndingsDetector
 
     public init(config: CoachConfig, random: any RandomNumberGenerator = SystemRandomNumberGenerator()) {
         self.config = config
@@ -58,6 +59,7 @@ public final class VoiceCoach {
         pace = PaceDetector(tuning: config.tuning, baselineRate: config.baselineRate)
         energy = EnergyMeter(baselineLevelDB: config.baselineLevelDB)
         sentenceStarts = SentenceStartCounter(language: config.language)
+        endings = EndingsDetector(tuning: config.tuning)
     }
 
     public func ingest(_ source: CoachSource, _ samples: UnsafeBufferPointer<Float>, sampleRate: Double) {
@@ -162,9 +164,11 @@ public final class VoiceCoach {
     private func observe(_ frame: FrameAnalysis) {
         pace.observe(frame)
         energy.observe(frame)
+        endings.observe(frame)
     }
 
     private func observe(_ line: CoachLine) {
+        endings.observe(line)
         guard config.transcriptCues, line.isOwn else { return }
         let result = sentenceStarts.observe(line)
         guard result.sentences > 0 else { return }
@@ -189,6 +193,12 @@ public final class VoiceCoach {
         events.append(CoachEvent(t: t, kind: .sample, detector: .energy, values: energy.sample(at: t)))
         if paceTick.trigger { fire(.pace, at: t, values: paceTick.values) }
         events.append(CoachEvent(t: t, kind: .sample, detector: .soStarts, values: sentenceStarts.sample(), note: config.transcriptCues ? nil : "engine lags"))
+        let endingTriggers = endings.tick(at: t)
+        events.append(CoachEvent(t: t, kind: .sample, detector: .risingEndings, values: endings.risingSample()))
+        events.append(CoachEvent(t: t, kind: .sample, detector: .trailingEndings, values: endings.trailingSample()))
+        for detector in endingTriggers {
+            fire(detector, at: t, values: detector == .risingEndings ? endings.risingSample() : endings.trailingSample())
+        }
     }
 
     @discardableResult
