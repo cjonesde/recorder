@@ -14,7 +14,7 @@ private final class HUDWindow: NSPanel {
 @MainActor
 final class CoachHUDPanel: NSObject, NSWindowDelegate {
     static let shared = CoachHUDPanel()
-    static let size = NSSize(width: 176, height: 30)
+    static let size = NSSize(width: 196, height: 30)
     static let gapBelowMenuBar: CGFloat = 6
 
     private var panel: NSPanel?
@@ -86,16 +86,39 @@ struct CoachHUDView: View {
     }
 
     var body: some View {
-        let state = coach.hud ?? .idle(coach.preset)
+        CoachHUDContent(state: coach.hud ?? .idle(coach.preset), paused: coach.isPaused)
+            .contextMenu {
+                ForEach(CoachPreset.allCases, id: \.self) { preset in
+                    Button {
+                        coach.overridePreset(preset)
+                    } label: {
+                        if preset == coach.preset {
+                            Label(preset.menuLabel, systemImage: "checkmark")
+                        } else {
+                            Text(preset.menuLabel)
+                        }
+                    }
+                }
+                Divider()
+                Button("Hide until next recording") { coach.hideForSession() }
+            }
+    }
+}
+
+struct CoachHUDContent: View {
+    let state: CoachHUDState
+    let paused: Bool
+
+    var body: some View {
         HStack(spacing: 8) {
             GateDot(gate: state.gate, talkShare: state.talkShare, talkShareHigh: state.talkShareHigh)
             EnergyBar(value: state.energy)
-            HStack(spacing: 2) {
-                ForEach(Self.cueOrder, id: \.self) { detector in
-                    Image(systemName: Self.symbol(detector))
-                        .font(.system(size: 10, weight: .bold))
+            HStack(spacing: 3) {
+                ForEach(CoachHUDView.cueOrder, id: \.self) { detector in
+                    Image(systemName: CoachHUDView.symbol(detector))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.2))
-                        .frame(width: 12, height: 12)
+                        .frame(width: 17, height: 12)
                         .opacity(state.litCues.contains(detector) ? 1 : 0)
                         .animation(.easeOut(duration: 0.25), value: state.litCues)
                 }
@@ -105,22 +128,7 @@ struct CoachHUDView: View {
         .frame(width: CoachHUDPanel.size.width, height: CoachHUDPanel.size.height)
         .background(Capsule().fill(Color.black.opacity(0.62)))
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
-        .opacity(coach.isPaused ? 0.4 : 1)
-        .contextMenu {
-            ForEach(CoachPreset.allCases, id: \.self) { preset in
-                Button {
-                    coach.overridePreset(preset)
-                } label: {
-                    if preset == coach.preset {
-                        Label(preset.menuLabel, systemImage: "checkmark")
-                    } else {
-                        Text(preset.menuLabel)
-                    }
-                }
-            }
-            Divider()
-            Button("Hide until next recording") { coach.hideForSession() }
-        }
+        .opacity(paused ? 0.4 : 1)
     }
 }
 
