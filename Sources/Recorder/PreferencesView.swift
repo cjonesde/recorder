@@ -1,4 +1,5 @@
 import SwiftUI
+import VoiceCoach
 
 /// The content of the dedicated **Preferences window**.
 ///
@@ -26,6 +27,9 @@ struct PreferencesView: View {
 
             SpeakerPreferences()
                 .tabItem { Label("Speakers", systemImage: "person.wave.2") }
+
+            CoachPreferences()
+                .tabItem { Label("Coach", systemImage: "gauge.with.dots.needle.33percent") }
         }
         .frame(width: 480, height: 620)
     }
@@ -299,6 +303,39 @@ private struct SpeakerPreferences: View {
                 }
             } header: {
                 Text("Saved voices")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct CoachPreferences: View {
+    @Environment(RecorderModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Form {
+            Section {
+                Toggle("Show the voice coach during recordings", isOn: $model.coachEnabled)
+                Text("A small bar under the camera shows your energy and lights a tortoise when you speak faster than your usual pace. It only listens to your voice while the other side is quiet. Other checks run in the background and only appear once your labels show they are right nine times in ten.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Does the cue help?") {
+                Toggle("Skip half of the cues on purpose", isOn: $model.coachWithholding)
+                Text("Each time a cue would light, a coin flip decides whether it shows. Skipped moments are still logged, and some calls show no cues at all, more often as the weeks go on. Comparing cued and uncued moments later tells you whether the cue changed anything, or whether you would have slowed down anyway.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Labels") {
+                Button("Review flagged moments…") {
+                    CoachReviewWindow.shared.show(model: model)
+                }
+                Text("Listen to the clips of flagged moments and mark each one right or a false alarm, ideally once a week. A check joins the HUD only when your labels show it is right nine times in ten.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

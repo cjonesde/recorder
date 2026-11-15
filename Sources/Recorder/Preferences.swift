@@ -1,4 +1,5 @@
 import Foundation
+import VoiceCoach
 
 /// Typed wrapper over `UserDefaults` for the app's persisted preferences.
 ///
@@ -20,6 +21,11 @@ enum Preferences {
         static let voiceProfiles       = "voiceProfilesEnabled"
         static let liveEngine          = "liveEngine"
         static let showDebugInfo       = "showDebugInfo"
+        static let coachEnabled        = "coachEnabled"
+        static let coachWithholding    = "coachWithholding"
+        static let coachPromoted       = "coachPromoted"
+        static let coachSessionCount   = "coachSessionCount"
+        static let coachHUDOrigin      = "coachHUDOrigin"
     }
 
     /// Seconds of two-channel silence before a recording auto-stops. Default 300 (5 min).
@@ -103,5 +109,42 @@ enum Preferences {
     static var showDebugInfo: Bool {
         get { defaults.bool(forKey: Key.showDebugInfo) }
         set { defaults.set(newValue, forKey: Key.showDebugInfo) }
+    }
+
+    static var coachEnabled: Bool {
+        get { defaults.bool(forKey: Key.coachEnabled) }
+        set { defaults.set(newValue, forKey: Key.coachEnabled) }
+    }
+
+    static var coachWithholding: Bool {
+        get { defaults.object(forKey: Key.coachWithholding) == nil ? true : defaults.bool(forKey: Key.coachWithholding) }
+        set { defaults.set(newValue, forKey: Key.coachWithholding) }
+    }
+
+    static var coachPromoted: Set<DetectorID> {
+        get {
+            guard let raw = defaults.array(forKey: Key.coachPromoted) as? [String] else { return [.pace] }
+            return Set(raw.compactMap(DetectorID.init(rawValue:)))
+        }
+        set { defaults.set(newValue.map(\.rawValue).sorted(), forKey: Key.coachPromoted) }
+    }
+
+    static var coachSessionCount: Int {
+        get { defaults.integer(forKey: Key.coachSessionCount) }
+        set { defaults.set(newValue, forKey: Key.coachSessionCount) }
+    }
+
+    static var coachHUDOrigin: CGPoint? {
+        get {
+            guard let raw = defaults.array(forKey: Key.coachHUDOrigin) as? [Double], raw.count == 2 else { return nil }
+            return CGPoint(x: raw[0], y: raw[1])
+        }
+        set {
+            if let newValue {
+                defaults.set([Double(newValue.x), Double(newValue.y)], forKey: Key.coachHUDOrigin)
+            } else {
+                defaults.removeObject(forKey: Key.coachHUDOrigin)
+            }
+        }
     }
 }

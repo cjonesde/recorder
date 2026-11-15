@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import VoiceCoach
 
 /// The full menu-bar panel UI for the recorder.
 ///
@@ -43,6 +44,8 @@ struct RecorderPanel: View {
             }
 
             audioHandlingChip
+
+            coachControls
 
             if model.isCapturing && !model.audioHandlingMode.retainsAudio {
                 Label("Transcript only, no audio saved", systemImage: "eye.slash")
@@ -154,6 +157,44 @@ struct RecorderPanel: View {
     }
 
     // MARK: - 2. Primary controls
+
+    @ViewBuilder
+    private var coachControls: some View {
+        if model.state == .idle {
+            Toggle(isOn: Binding(get: { model.coachEnabled }, set: { model.coachEnabled = $0 })) {
+                Label("Voice coach", systemImage: "gauge.with.dots.needle.33percent")
+                    .font(.caption)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+        } else if model.coach.isActive {
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(CoachPreset.allCases, id: \.self) { preset in
+                        Button {
+                            model.coach.overridePreset(preset)
+                        } label: {
+                            if preset == model.coach.preset {
+                                Label(preset.menuLabel, systemImage: "checkmark")
+                            } else {
+                                Text(preset.menuLabel)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Coach: \(model.coach.preset.menuLabel)", systemImage: "gauge.with.dots.needle.33percent")
+                        .font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                if model.coach.hiddenForSession {
+                    Button("Show") { model.coach.showAgain() }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                }
+            }
+        }
+    }
 
     private var audioHandlingChip: some View {
         Menu {

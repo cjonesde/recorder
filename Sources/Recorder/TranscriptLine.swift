@@ -10,6 +10,7 @@ struct TranscriptLine: Identifiable, Equatable {
     let time: TimeInterval
     let text: String
     let speaker: String?
+    var end: TimeInterval? = nil
 
     var markdown: String {
         let prefix = speaker.map { "**\($0)**: " } ?? ""

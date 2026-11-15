@@ -1,0 +1,69 @@
+import Foundation
+@testable import VoiceCoach
+
+struct CoachRun {
+    var events: [CoachEvent] = []
+    var clips: [ClipRequest] = []
+    var huds: [CoachHUDState] = []
+
+    var last: CoachHUDState? { huds.last }
+
+    func samples(_ detector: DetectorID) -> [CoachEvent] { events.filter { $0.kind == .sample && $0.detector == detector } }
+    func triggers(_ detector: DetectorID) -> [CoachEvent] { events.filter { $0.kind == .trigger && $0.detector == detector } }
+}
+
+func makeCoach(_ configure: (inout CoachConfig) -> Void = { _ in }, seed: UInt64 = 11) -> VoiceCoach {
+    var config = CoachConfig(language: "en")
+    configure(&config)
+    return VoiceCoach(config: config, random: SplitMix64(seed: seed))
+}
+
+@discardableResult
+func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, chunk: Int = 4800, lines: [CoachLine] = [], lineLag: Double = 0, desktopGaps: [ClosedRange<Double>] = [], into run: inout CoachRun) -> CoachRun {
+    let arrival = { (line: CoachLine) in (line.end ?? line.time) + lineLag }
+    var pendingLines = lines.sorted { arrival($0) < arrival($1) }
+    var offset = 0
+    let total = max(mic.count, desktop?.count ?? 0)
+    while offset < total {
+        let end = min(offset + chunk, total)
+        if offset < mic.count {
+            mic[offset..<min(end, mic.count)].withUnsafeBufferPointer { coach.ingest(.mic, $0, sampleRate: rate) }
+        }
+        let chunkStart = Double(offset) / rate
+        let dropped = desktopGaps.contains { $0.contains(chunkStart) }
+        if let desktop, offset < desktop.count, !dropped {
+            desktop[offset..<min(end, desktop.count)].withUnsafeBufferPointer { coach.ingest(.desktop, $0, sampleRate: rate) }
+        }
+        let now = Double(end) / rate
+        while let line = pendingLines.first, arrival(line) <= now {
+            coach.ingest(line)
+            pendingLines.removeFirst()
+        }
+        let output = coach.advance()
+        run.events += output.events
+        run.clips += output.clips
+        run.huds.append(output.hud)
+        offset = end
+    }
+    return run
+}
+
+func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, lines: [CoachLine] = [], lineLag: Double = 0, desktopGaps: [ClosedRange<Double>] = []) -> CoachRun {
+    var run = CoachRun()
+    let chunk = Int(rate / 10)
+    return feed(coach, mic: mic, desktop: desktop, rate: rate, chunk: chunk, lines: lines, lineLag: lineLag, desktopGaps: desktopGaps, into: &run)
+}
+
+extension CoachRun {
+    func gateShares(from start: Double, to end: Double) -> [CoachEvent] {
+        events.filter { $0.kind == .sample && $0.note == "gate" && $0.t > start && $0.t <= end }
+    }
+}
+
+func quietDesktop(seconds: Double, rate: Double = 48_000) -> [Float] {
+    Synth.noise(seconds: seconds, db: -90, rate: rate, seed: 99)
+}
+
+func speech(seconds: Double, syllables: Double = 4, levelDB: Double = -20, f0: Double = 130, seed: UInt64 = 1) -> [Float] {
+    Synth.voice(f0: { t in f0 + 10 * sin(2 * .pi * 0.7 * t) }, syllablesPerSecond: syllables, seconds: seconds, levelDB: levelDB, seed: seed)
+}

@@ -12,9 +12,19 @@ let package = Package(
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.0", traits: [])
     ],
     targets: [
+        .target(
+            name: "VoiceCoach",
+            path: "Sources/VoiceCoach"
+        ),
+        .executableTarget(
+            name: "coach-replay",
+            dependencies: ["VoiceCoach"],
+            path: "Sources/CoachReplay"
+        ),
         .executableTarget(
             name: "Recorder",
             dependencies: [
+                "VoiceCoach",
                 .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "SpeakerKit", package: "WhisperKit"),
                 .product(name: "FluidAudio", package: "FluidAudio")
@@ -26,8 +36,14 @@ let package = Package(
         ),
         .testTarget(
             name: "RecorderTests",
-            dependencies: ["Recorder"],
+            dependencies: ["Recorder", "VoiceCoach"],
             path: "Tests/RecorderTests"
+        ),
+        .testTarget(
+            name: "VoiceCoachTests",
+            dependencies: ["VoiceCoach"],
+            path: "Tests/VoiceCoachTests",
+            resources: [.copy("Fixtures")]
         )
     ]
 )

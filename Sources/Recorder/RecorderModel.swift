@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import AppKit
 import os
+import VoiceCoach
 
 /// Owns every component and wires their callbacks. The model is @MainActor;
 /// audio-thread callbacks hop to main via DispatchQueue.main.async before touching state.
@@ -100,6 +101,17 @@ final class RecorderModel {
     var liveEngine: LiveEngineKind = .default {
         didSet { Preferences.liveEngine = liveEngine }
     }
+    var coachEnabled: Bool = false {
+        didSet { Preferences.coachEnabled = coachEnabled }
+    }
+    var coachWithholding: Bool = true {
+        didSet { Preferences.coachWithholding = coachWithholding }
+    }
+    var coachPromoted: Set<DetectorID> = [.pace] {
+        didSet { Preferences.coachPromoted = coachPromoted }
+    }
+    let coach = CoachController()
+
     var showDebugInfo: Bool = false {
         didSet {
             Preferences.showDebugInfo = showDebugInfo
@@ -234,11 +246,14 @@ final class RecorderModel {
         // Feed both captures into the live-transcription inbox. The inbox is a
         // no-op outside an active session, so the hooks stay wired permanently.
         let router = live.router
+        let coachRelay = coach.relay
         tap.onSamples = { samples, count, rate in
             router.ingest(.desktop, samples, count: count, rate: rate)
+            coachRelay.ingest(.desktop, samples, count: count, rate: rate)
         }
         mic.onSamples = { samples, count, rate in
             router.ingest(.mic, samples, count: count, rate: rate)
+            coachRelay.ingest(.mic, samples, count: count, rate: rate)
         }
 
         live.onFailure = { [weak self] in
@@ -272,6 +287,9 @@ final class RecorderModel {
         voiceProfilesEnabled = Preferences.voiceProfiles
         liveEngine = Preferences.liveEngine
         showDebugInfo = Preferences.showDebugInfo
+        coachEnabled = Preferences.coachEnabled
+        coachWithholding = Preferences.coachWithholding
+        coachPromoted = Preferences.coachPromoted
     }
 
     // MARK: - Recording control
@@ -428,6 +446,20 @@ final class RecorderModel {
         state = .recording
         statusMessage = nil
         startElapsedTimer(from: now)
+        startCoach(session: session, meeting: meeting, mode: mode)
+    }
+
+    private func startCoach(session: RecordingSession, meeting: Meeting?, mode: AudioHandlingMode) {
+        guard coachEnabled else { return }
+        let live = self.live
+        coach.start(
+            folder: session.folderURL,
+            language: String(transcriptionLanguage.prefix(2)),
+            engine: recordingUsesLive ? liveEngine : nil,
+            attendeeCount: meeting?.attendees.count,
+            retainsAudio: mode.retainsAudio,
+            lines: { live.confirmedLines }
+        )
     }
 
     /// Change the audio-handling mode for the recording in progress. Downgrading to
@@ -460,6 +492,7 @@ final class RecorderModel {
         audioHandlingMode = mode
 
         if AudioHandlingChange.deletesPartialAudio(from: activeMode, to: mode) {
+            coach.audioRetentionChanged(retains: false)
             tap.stopWriting()
             mic.stopWriting()
             for url in [session.desktopURL, session.micURL, session.outputURL].compactMap({ $0 }) {
@@ -477,11 +510,13 @@ final class RecorderModel {
         case .recording:
             tap.setPaused(true)
             mic.setPaused(true)
+            coach.setPaused(true)
             silenceMonitor?.stop()
             state = .paused
         case .paused:
             tap.setPaused(false)
             mic.setPaused(false)
+            coach.setPaused(false)
             silenceMonitor?.start()
             state = .recording
         case .idle, .preparing, .finishing:
@@ -492,6 +527,7 @@ final class RecorderModel {
     func saveAndStop() {
         guard isCapturing, let session = currentSession else { return }
 
+        let coachSummary = coach.stop()
         let desktopResult = tap.stop()
         let micResult = mic.stop()
 
@@ -547,6 +583,9 @@ final class RecorderModel {
                 guard let liveResult = await liveTask?.value, !liveResult.isEmpty else {
                     self.transcriptionState = .failed("Nothing was transcribed, and no audio was kept.")
                     self.statusMessage = "Nothing to save"
+                    if let coachSummary, coachSummary.ownSpeechSeconds < CoachController.keepLogOwnSeconds {
+                        CoachController.removeArtifacts(in: folderURL)
+                    }
                     if diagnostics == nil { Self.removeFolderIfEmpty(folderURL) }
                     self.refreshRecordings()
                     return
@@ -648,6 +687,7 @@ final class RecorderModel {
             return
         }
 
+        coach.stop(discard: true)
         _ = tap.stop()
         _ = mic.stop()
         live.cancelSession()
