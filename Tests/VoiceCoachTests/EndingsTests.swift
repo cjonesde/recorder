@@ -28,9 +28,9 @@ final class EndingsTests: XCTestCase {
         return signal
     }
 
-    private func run(_ audio: [Float], lines: [CoachLine] = []) -> CoachRun {
+    private func run(_ audio: [Float], lines: [CoachLine] = [], lineLag: Double = 0) -> CoachRun {
         let seconds = Double(audio.count) / 48_000
-        return feed(makeCoach { $0.transcriptCues = true }, mic: audio, desktop: quietDesktop(seconds: seconds + 0.5), lines: lines)
+        return feed(makeCoach { $0.transcriptCues = true }, mic: audio, desktop: quietDesktop(seconds: seconds + 0.5), lines: lines, lineLag: lineLag)
     }
 
     private func phraseStart(_ index: Int) -> Double { 1 + Double(index) * (Self.phraseSeconds + Self.gapSeconds) }
@@ -80,5 +80,31 @@ final class EndingsTests: XCTestCase {
         Synth.mix(&mic, Synth.noise(seconds: Double(remote.count) / 48_000, db: -65, seed: 3))
         let run = feed(makeCoach(), mic: mic, desktop: remote)
         XCTAssertEqual(run.samples(.risingEndings).last?.values["measured"] ?? -1, 0)
+    }
+
+    func testLongQuestionLineMatchesByItsEnd() {
+        let lines = (0..<6).map { index -> CoachLine in
+            let end = phraseStart(index) + Self.phraseSeconds
+            return CoachLine(time: end - 12, text: "Is that right?", isOwn: true, end: end)
+        }
+        let run = run(talk(Array(repeating: (4.5, 0), count: 6)), lines: lines)
+        XCTAssertTrue(run.triggers(.risingEndings).isEmpty)
+        XCTAssertEqual(run.samples(.risingEndings).last?.values["measured"] ?? -1, 0)
+        XCTAssertEqual(run.samples(.risingEndings).last?.values["questions"] ?? 0, 6, accuracy: 0.5)
+    }
+
+    func testLateQuestionLineStillExcludesItsPhrase() {
+        let lines = (0..<6).map { CoachLine(time: phraseStart($0), text: "Is that right?", isOwn: true, end: phraseStart($0) + Self.phraseSeconds) }
+        let run = run(talk(Array(repeating: (4.5, 0), count: 6)), lines: lines, lineLag: 5)
+        XCTAssertTrue(run.triggers(.risingEndings).isEmpty)
+        XCTAssertEqual(run.samples(.risingEndings).last?.values["measured"] ?? -1, 0)
+        XCTAssertEqual(run.samples(.risingEndings).last?.values["questions"] ?? 0, 6, accuracy: 0.5)
+    }
+
+    func testQuestionLineLeavesTheNextPhraseAlone() {
+        let lines = [0, 2, 4].map { CoachLine(time: phraseStart($0), text: "Is that right?", isOwn: true, end: phraseStart($0) + Self.phraseSeconds) }
+        let run = run(talk(Array(repeating: (4.5, 0), count: 6)), lines: lines, lineLag: 1)
+        XCTAssertEqual(run.samples(.risingEndings).last?.values["questions"] ?? 0, 3, accuracy: 0.5)
+        XCTAssertEqual(run.samples(.risingEndings).last?.values["measured"] ?? 0, 3, accuracy: 0.5)
     }
 }

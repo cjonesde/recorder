@@ -19,8 +19,9 @@ func makeCoach(_ configure: (inout CoachConfig) -> Void = { _ in }, seed: UInt64
 }
 
 @discardableResult
-func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, chunk: Int = 4800, lines: [CoachLine] = [], desktopGaps: [ClosedRange<Double>] = [], into run: inout CoachRun) -> CoachRun {
-    var pendingLines = lines.sorted { $0.time < $1.time }
+func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, chunk: Int = 4800, lines: [CoachLine] = [], lineLag: Double = 0, desktopGaps: [ClosedRange<Double>] = [], into run: inout CoachRun) -> CoachRun {
+    let arrival = { (line: CoachLine) in (line.end ?? line.time) + lineLag }
+    var pendingLines = lines.sorted { arrival($0) < arrival($1) }
     var offset = 0
     let total = max(mic.count, desktop?.count ?? 0)
     while offset < total {
@@ -34,7 +35,7 @@ func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 4
             desktop[offset..<min(end, desktop.count)].withUnsafeBufferPointer { coach.ingest(.desktop, $0, sampleRate: rate) }
         }
         let now = Double(end) / rate
-        while let line = pendingLines.first, line.time <= now {
+        while let line = pendingLines.first, arrival(line) <= now {
             coach.ingest(line)
             pendingLines.removeFirst()
         }
@@ -47,10 +48,10 @@ func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 4
     return run
 }
 
-func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, lines: [CoachLine] = [], desktopGaps: [ClosedRange<Double>] = []) -> CoachRun {
+func feed(_ coach: VoiceCoach, mic: [Float], desktop: [Float]?, rate: Double = 48_000, lines: [CoachLine] = [], lineLag: Double = 0, desktopGaps: [ClosedRange<Double>] = []) -> CoachRun {
     var run = CoachRun()
     let chunk = Int(rate / 10)
-    return feed(coach, mic: mic, desktop: desktop, rate: rate, chunk: chunk, lines: lines, desktopGaps: desktopGaps, into: &run)
+    return feed(coach, mic: mic, desktop: desktop, rate: rate, chunk: chunk, lines: lines, lineLag: lineLag, desktopGaps: desktopGaps, into: &run)
 }
 
 extension CoachRun {

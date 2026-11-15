@@ -60,4 +60,13 @@ final class VoiceCoachEngineTests: XCTestCase {
         XCTAssertEqual(events.map(\.kind), [.preset])
         XCTAssertEqual(coach.advance().hud.preset, .group)
     }
+
+    func testClearCuesTurnsLitCuesOff() {
+        let coach = makeCoach { $0.withholding = false }
+        feed(coach, mic: Synth.noise(seconds: 2, db: -65, seed: 3), desktop: quietDesktop(seconds: 2.5))
+        coach.fire(.pace, at: 2)
+        XCTAssertTrue(coach.advance().hud.litCues.contains(.pace))
+        coach.clearCues()
+        XCTAssertTrue(coach.advance().hud.litCues.isEmpty)
+    }
 }

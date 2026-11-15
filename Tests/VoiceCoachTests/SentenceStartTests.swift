@@ -81,4 +81,18 @@ final class SentenceStartTests: XCTestCase {
             XCTAssertFalse(json.contains("secret"))
         }
     }
+
+    func testSoClipCoversTheWholeLine() throws {
+        let lines = (0..<7).map { index -> CoachLine in
+            let start = 1 + Double(index) * 4
+            return CoachLine(time: start, text: index < 3 ? "So here we go." : "Fine.", isOwn: true, end: start + 3)
+        }
+        let coach = makeCoach { $0.transcriptCues = true; $0.promoted = [.pace, .soStarts]; $0.withholding = false }
+        let run = feed(coach, mic: Synth.noise(seconds: 36, db: -65, seed: 2), desktop: quietDesktop(seconds: 36), lines: lines, lineLag: 2)
+        let trigger = try XCTUnwrap(run.triggers(.soStarts).first)
+        let line = try XCTUnwrap(lines.first { abs($0.time - trigger.t) < 1e-9 })
+        let clip = try XCTUnwrap(run.clips.first { $0.id == trigger.id })
+        XCTAssertEqual(clip.start, line.time - 1, accuracy: 1e-9)
+        XCTAssertEqual(clip.end, (line.end ?? 0) + 0.5, accuracy: 1e-9)
+    }
 }

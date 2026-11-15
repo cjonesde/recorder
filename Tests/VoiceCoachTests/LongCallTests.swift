@@ -89,4 +89,29 @@ final class LongCallTests: XCTestCase {
         let run = feed(makeCoach(), mic: mic, desktop: silence(seconds + 0.5), rate: rate)
         XCTAssertEqual(run.triggers(.risingEndings).count, 1)
     }
+
+    func testDrainingDesktopBeforeMicDoesNotRealign() {
+        let mic = room(1) + mine(20)
+        let desktop = silence(Double(mic.count) / rate)
+        let coach = makeCoach()
+        var events: [CoachEvent] = []
+        let batch = Int(rate / 2)
+        var offset = 0
+        while offset < mic.count {
+            let end = min(offset + batch, mic.count)
+            for (source, samples) in [(CoachSource.desktop, desktop), (.mic, mic)] {
+                var start = offset
+                while start < end {
+                    let stop = min(start + 4096, end)
+                    samples[start..<stop].withUnsafeBufferPointer { coach.ingest(source, $0, sampleRate: rate) }
+                    start = stop
+                }
+            }
+            events += coach.advance().events
+            offset = end
+        }
+        let gaps = events.filter { $0.kind == .gap }.compactMap(\.note)
+        XCTAssertEqual(gaps, [])
+        XCTAssertGreaterThan(coach.ownSpeechSeconds, 15)
+    }
 }

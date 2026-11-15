@@ -15,6 +15,8 @@ struct EndingsDetector {
     static let pause = 0.4
     static let pendingSeconds = 3.0
     static let questionLookback = 10.0
+    static let questionEndWindow = 1.5
+    static let questionSlack = 1.0
     static let window = 8
     static let minimumMeasured = 5
     static let risingThreshold = 0.30
@@ -43,7 +45,7 @@ struct EndingsDetector {
     private(set) var pending: [PhraseEnding] = []
     private(set) var recent: [PhraseEnding] = []
     private(set) var questions = 0
-    private var questionLines: [Double] = []
+    private var questionSpans: [ClosedRange<Double>] = []
     private var lastRising = -Double.infinity
     private var lastTrailing = -Double.infinity
     private var committed = 0
@@ -101,21 +103,28 @@ struct EndingsDetector {
             trailing = tail.reduce(0, +) / Double(tail.count) < bodyMedian - Self.trailingDropDB
         }
         var ending = PhraseEnding(end: end, contour: result.contour, rise: result.rise, fall: result.fall, trailing: trailing, detectedAt: now)
-        ending.question = questionLines.contains { Self.asks($0, about: end) }
+        ending.question = questionSpans.contains { $0.contains(end) }
         pending.append(ending)
     }
 
     mutating func observe(_ line: CoachLine) {
         guard line.isOwn, line.text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") else { return }
-        questionLines.removeAll { $0 < line.time - 2 * Self.questionLookback }
-        questionLines.append(line.time)
-        for index in pending.indices where Self.asks(line.time, about: pending[index].end) {
+        let span = Self.questionSpan(of: line)
+        questionSpans.removeAll { $0.upperBound < span.lowerBound - 2 * Self.questionLookback }
+        questionSpans.append(span)
+        for index in pending.indices where span.contains(pending[index].end) {
             pending[index].question = true
+        }
+        let answered = recent.filter { span.contains($0.end) }.count
+        if answered > 0 {
+            recent.removeAll { span.contains($0.end) }
+            questions += answered
         }
     }
 
-    private static func asks(_ lineTime: Double, about end: Double) -> Bool {
-        lineTime >= end - questionLookback && lineTime <= end
+    static func questionSpan(of line: CoachLine) -> ClosedRange<Double> {
+        guard let end = line.end, end >= line.time else { return line.time...(line.time + questionLookback) }
+        return max(line.time - questionSlack, end - questionEndWindow)...(end + questionSlack)
     }
 
     mutating func tick(at t: Double) -> [DetectorID] {

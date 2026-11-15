@@ -6,7 +6,7 @@ enum ClipOutcome: Equatable {
 }
 
 struct ClipPlanner {
-    static let historySeconds = 16.0
+    static let historySeconds = 32.0
 
     let tuning: CoachTuning
     private var gates: [GateState] = []
@@ -17,9 +17,19 @@ struct ClipPlanner {
         self.tuning = tuning
     }
 
-    mutating func register(id: String, detector: DetectorID, at t: Double) {
-        let start = max(0, t - tuning.clipBefore)
-        pending.append(ClipRequest(id: id, detector: detector, start: start, end: t + tuning.clipAfter))
+    mutating func register(id: String, detector: DetectorID, at t: Double, window: ClosedRange<Double>? = nil) {
+        let span = window ?? max(0, t - tuning.clipBefore)...(t + tuning.clipAfter)
+        pending.append(ClipRequest(id: id, detector: detector, start: span.lowerBound, end: span.upperBound))
+    }
+
+    mutating func flush(at t: Double) -> [ClipOutcome] {
+        let due = pending
+        pending.removeAll()
+        return due.map { request in
+            guard request.end > t else { return decide(request) }
+            guard t > request.start else { return .skip(id: request.id, reason: "session ended") }
+            return decide(ClipRequest(id: request.id, detector: request.detector, start: request.start, end: t))
+        }
     }
 
     mutating func observe(index: Int, t: Double, gate: GateState) -> [ClipOutcome] {

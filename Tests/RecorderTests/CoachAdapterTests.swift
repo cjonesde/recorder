@@ -186,4 +186,64 @@ final class CoachAdapterTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent(CoachPump.clipsFolderName).path))
         _ = pump.stop()
     }
+
+    @MainActor
+    func testControllerIgnoresLinesWithoutLiveTranscription() throws {
+        let store = CoachStore(directory: folder.appendingPathComponent("support", isDirectory: true))
+        let controller = CoachController(store: store)
+        controller.showsPanel = false
+        var asked = 0
+        controller.start(folder: folder, language: "en", engine: nil, attendeeCount: nil, retainsAudio: false, lines: {
+            asked += 1
+            return [TranscriptLine(time: 1, text: "So, is it stale?", speaker: "You")]
+        })
+        controller.stop(discard: true)
+        XCTAssertEqual(asked, 0)
+        let session = try XCTUnwrap(try events().first { $0.kind == .session })
+        XCTAssertEqual(session.values["transcriptCues"], 0)
+    }
+
+    func testEveryTriggerGetsAClipDecisionByStop() throws {
+        let pump = pump({ $0.baselineRate = 4 }, retainsAudio: true)
+        let audio = fastTalk()
+        push(pump, mic: audio.mic, desktop: audio.desktop)
+        _ = pump.stop()
+        let events = try events()
+        let triggers = Set(events.filter { $0.kind == .trigger }.compactMap(\.id))
+        let decided = Set(events.filter { $0.kind == .clip }.compactMap(\.id))
+        XCTAssertFalse(triggers.isEmpty)
+        XCTAssertEqual(triggers.subtracting(decided), [])
+    }
+
+    func testFailedClipSetupThrows() {
+        let url = folder.appendingPathComponent("empty.m4a")
+        XCTAssertThrowsError(try CoachPump.writeAAC([], rate: 48_000, to: url))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testReviewClockShowsHours() {
+        XCTAssertEqual(CoachReviewView.clock(75), "01:15")
+        XCTAssertEqual(CoachReviewView.clock(4503), "1:15:03")
+    }
+
+    @MainActor
+    func testPlaybackIsScopedToTheClipNotTheTriggerID() throws {
+        var records: [CoachTriggerRecord] = []
+        for name in ["first", "second"] {
+            let session = folder.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+            let clip = session.appendingPathComponent("pace-8000.m4a")
+            try CoachPump.writeAAC([Float](repeating: 0.01, count: 48_000), rate: 48_000, to: clip)
+            records.append(CoachTriggerRecord(id: "pace-8000", detector: .pace, t: 8, shown: true, note: "", folder: session, clipURL: clip))
+        }
+        let review = CoachReviewModel(root: nil)
+        review.toggle(records[0])
+        XCTAssertTrue(review.isPlaying(records[0]))
+        XCTAssertFalse(review.isPlaying(records[1]))
+        review.toggle(records[1])
+        XCTAssertTrue(review.isPlaying(records[1]))
+        XCTAssertFalse(review.isPlaying(records[0]))
+        review.toggle(records[1])
+        XCTAssertFalse(review.isPlaying(records[1]))
+    }
 }

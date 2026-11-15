@@ -24,7 +24,7 @@ struct StreamingTranscript {
         provisional.removeAll { $0.start < end && $0.end > start || $0.start == start }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if final {
-            if !text.isEmpty { lines.append(TranscriptLine(time: max(0, start), text: text, speaker: speaker)) }
+            if !text.isEmpty { lines.append(TranscriptLine(time: max(0, start), text: text, speaker: speaker, end: end)) }
             finalEnd = end
             provisional.removeAll { $0.end <= end }
         } else if !text.isEmpty {

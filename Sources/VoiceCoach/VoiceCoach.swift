@@ -7,6 +7,7 @@ struct FrameAnalysis {
     let gate: GateState
     let f0: Double
     let floorDB: Double
+    var remoteAudible = false
 
     var isOwn: Bool { gate == .own }
 }
@@ -32,6 +33,7 @@ public final class VoiceCoach {
     private var desktopLevels: [Double] = []
     private var desktopBase = 0
     private var deficits: [Int] = []
+    private var desktopArrived = false
     private var gate: OwnVoiceGate
     private var voice: VoiceConfirmer
     private let pitch: PitchTracker
@@ -80,7 +82,7 @@ public final class VoiceCoach {
             desktopDownsampler.process(samples, rate: sampleRate, into: &scratch)
             let frames = desktopFrames.push(scratch)
             for frame in frames { desktopLevels.append(frame.db) }
-            if !frames.isEmpty { realignDesktop() }
+            if !frames.isEmpty { desktopArrived = true }
         }
     }
 
@@ -131,6 +133,10 @@ public final class VoiceCoach {
             started = true
             events.append(sessionEvent())
         }
+        if desktopArrived {
+            desktopArrived = false
+            realignDesktop()
+        }
         let leadFrames = tuning.leadFrames
         let desktopCount = desktopAligned
         let micLatest = micFrames.framesProduced
@@ -156,6 +162,18 @@ public final class VoiceCoach {
         return output
     }
 
+    public func flush() -> CoachOutput {
+        record(clipPlanner.flush(at: lastTime), at: lastTime)
+        let output = CoachOutput(hud: hud(at: lastTime), events: events, clips: clips)
+        events.removeAll(keepingCapacity: true)
+        clips.removeAll(keepingCapacity: true)
+        return output
+    }
+
+    public func clearCues() {
+        litUntil.removeAll()
+    }
+
     public func finish() -> CoachSessionSummary {
         CoachSessionSummary(language: config.language, ownSpeechSeconds: ownSpeechSeconds, articulationRate: pace.sessionRateMedian, levelDB: energy.sessionLevelMedian)
     }
@@ -177,7 +195,11 @@ public final class VoiceCoach {
         if state == .own, let samples = micFrames.window(endingAt: i, length: pitch.span) {
             f0 = pitch.f0(samples)
         }
-        let analysis = FrameAnalysis(index: i, t: time(of: i), micDB: frame.db, gate: state, f0: f0, floorDB: gate.micFloorDB)
+        var analysis = FrameAnalysis(index: i, t: time(of: i), micDB: frame.db, gate: state, f0: f0, floorDB: gate.micFloorDB)
+        if state == .overlap {
+            let recent = tuning.frames(TurnTaking.audibleRecentSeconds)
+            analysis.remoteAudible = ((i - recent)...i).contains { desktopLevel($0).map(gate.isTapActive) ?? false }
+        }
         for confirmed in voice.push(analysis) { consume(confirmed) }
     }
 
@@ -190,7 +212,15 @@ public final class VoiceCoach {
         lastGate = state
         lastTime = t
         observe(analysis)
-        for outcome in clipPlanner.observe(index: i, t: t, gate: state) {
+        record(clipPlanner.observe(index: i, t: t, gate: state), at: t)
+        if t >= nextTick - 1e-9 {
+            tick(at: t)
+            nextTick += 1
+        }
+    }
+
+    private func record(_ outcomes: [ClipOutcome], at t: Double) {
+        for outcome in outcomes {
             switch outcome {
             case .keep(let request):
                 clips.append(request)
@@ -198,10 +228,6 @@ public final class VoiceCoach {
             case .skip(let id, let reason):
                 events.append(CoachEvent(t: t, kind: .clip, note: reason, id: id))
             }
-        }
-        if t >= nextTick - 1e-9 {
-            tick(at: t)
-            nextTick += 1
         }
     }
 
@@ -227,7 +253,7 @@ public final class VoiceCoach {
         energy.observe(frame)
         endings.observe(frame)
         prosody.observe(frame, newPeak: pace.totalSyllables > syllablesBefore ? pace.lastPeak : nil)
-        turns.observe(t: frame.t, gate: frame.gate)
+        turns.observe(t: frame.t, gate: frame.gate, remoteAudible: frame.remoteAudible)
     }
 
     private func observe(_ line: CoachLine) {
@@ -237,8 +263,17 @@ public final class VoiceCoach {
         guard result.sentences > 0 else { return }
         let t = max(line.time, 0)
         if sentenceStarts.shouldTrigger(at: max(t, lastTime)) {
-            fire(.soStarts, at: t, values: sentenceStarts.sample())
+            fire(.soStarts, at: t, values: sentenceStarts.sample(), clip: Self.clipWindow(for: line, from: t))
         }
+    }
+
+    static let lineClipLead = 1.0
+    static let lineClipTail = 0.5
+    static let lineClipLimit = 15.0
+
+    static func clipWindow(for line: CoachLine, from start: Double) -> ClosedRange<Double>? {
+        guard let end = line.end, end > start else { return nil }
+        return max(0, start - lineClipLead)...(min(end, start + lineClipLimit) + lineClipTail)
     }
 
     private func tick(at t: Double) {
@@ -271,12 +306,12 @@ public final class VoiceCoach {
     }
 
     @discardableResult
-    func fire(_ detector: DetectorID, at t: Double, values: [String: Double] = [:]) -> String {
+    func fire(_ detector: DetectorID, at t: Double, values: [String: Double] = [:], clip window: ClosedRange<Double>? = nil) -> String {
         let decision = CuePolicy.decide(detector, config: config, random: &random)
         let id = "\(detector.rawValue)-\(Int((t * 1000).rounded()))"
         events.append(CoachEvent(t: t, kind: .trigger, detector: detector, values: values, shown: decision.shown, note: decision.note, id: id))
         if decision.shown { litUntil[detector] = max(t, lastTime) + tuning.cueSeconds }
-        clipPlanner.register(id: id, detector: detector, at: t)
+        clipPlanner.register(id: id, detector: detector, at: t, window: window)
         return id
     }
 

@@ -42,11 +42,13 @@ public struct CoachLine: Sendable, Equatable {
     public let time: Double
     public let text: String
     public let isOwn: Bool
+    public let end: Double?
 
-    public init(time: Double, text: String, isOwn: Bool) {
+    public init(time: Double, text: String, isOwn: Bool, end: Double? = nil) {
         self.time = time
         self.text = text
         self.isOwn = isOwn
+        self.end = end
     }
 }
 

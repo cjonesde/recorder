@@ -83,4 +83,14 @@ final class TurnTakingTests: XCTestCase {
             XCTAssertTrue(Set(event.values.keys).isSubset(of: allowed), "\(event.values.keys)")
         }
     }
+
+    func testSpeakingRightAfterThemIsNotAnInterruption() {
+        let remote = theirs(3)
+        var bleed = Synth.delayed(remote, seconds: 0.04, gainDB: -18, rate: rate)
+        Synth.mix(&bleed, room(Double(bleed.count) / rate))
+        let mic = room(1) + bleed + room(0.1) + mine(3) + room(2)
+        let desktop = silence(1) + remote + silence(Double(mic.count) / rate - 4 + 0.5)
+        let run = feed(makeCoach(), mic: mic, desktop: desktop, rate: rate)
+        XCTAssertEqual(run.samples(.interruptions).last?.values["interruptedThem"], 0)
+    }
 }

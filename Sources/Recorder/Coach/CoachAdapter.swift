@@ -22,7 +22,7 @@ final class CoachRelay: @unchecked Sendable {
 final class CoachPump: @unchecked Sendable {
     static let ringFrames = 960_000
     static let tickInterval = DispatchTimeInterval.milliseconds(50)
-    static let clipRingSeconds = 12.0
+    static let clipRingSeconds = 30.0
     static let clipsFolderName = "coach-clips"
     static let logName = "coach.jsonl"
 
@@ -92,6 +92,13 @@ final class CoachPump: @unchecked Sendable {
         }
     }
 
+    func clearCues() {
+        queue.async { [self] in
+            guard !stopped else { return }
+            coach.clearCues()
+        }
+    }
+
     func audioRetentionChanged(retains: Bool) {
         queue.async { [self] in
             retainsAudio = retains
@@ -109,7 +116,12 @@ final class CoachPump: @unchecked Sendable {
         queue.sync {
             timer?.cancel()
             timer = nil
-            if !stopped { pumpOnce() }
+            if !stopped {
+                pumpOnce()
+                let flushed = coach.flush()
+                for event in flushed.events { write(event) }
+                for request in flushed.clips { writeClip(request) }
+            }
             stopped = true
             try? log?.close()
             log = nil
@@ -187,6 +199,10 @@ final class CoachPump: @unchecked Sendable {
         }
     }
 
+    struct ClipSetupError: LocalizedError {
+        var errorDescription: String? { "could not prepare the clip buffer" }
+    }
+
     static func writeAAC(_ samples: [Float], rate: Double, to url: URL) throws {
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -195,7 +211,7 @@ final class CoachPump: @unchecked Sendable {
         ]
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1, interleaved: false),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
-              let channel = buffer.floatChannelData?[0] else { return }
+              let channel = buffer.floatChannelData?[0], !samples.isEmpty else { throw ClipSetupError() }
         buffer.frameLength = AVAudioFrameCount(samples.count)
         samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
         let file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
@@ -225,7 +241,7 @@ final class CoachController {
         self.store = store ?? CoachStore.shared
     }
 
-    func start(folder: URL, language: String, engine: LiveEngineKind, attendeeCount: Int?, retainsAudio: Bool, lines: @escaping @MainActor () -> [TranscriptLine]) {
+    func start(folder: URL, language: String, engine: LiveEngineKind?, attendeeCount: Int?, retainsAudio: Bool, lines: @escaping @MainActor () -> [TranscriptLine]) {
         if isActive { stop(discard: true) }
         micName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "default"
         var config = CoachConfig(language: language)
@@ -244,7 +260,7 @@ final class CoachController {
             }
         }
         self.pump = pump
-        self.lines = lines
+        self.lines = engine == nil ? nil : lines
         seenLines = []
         preset = config.preset
         hud = .idle(config.preset)
@@ -290,6 +306,7 @@ final class CoachController {
     func setPaused(_ paused: Bool) {
         guard isActive else { return }
         isPaused = paused
+        if paused { pump?.clearCues() }
     }
 
     func overridePreset(_ preset: CoachPreset) {
@@ -316,6 +333,6 @@ final class CoachController {
     private func forwardLines() {
         guard let pump, let lines else { return }
         let fresh = lines().filter { seenLines.insert($0.id).inserted }
-        pump.ingest(lines: fresh.map { CoachLine(time: $0.time, text: $0.text, isOwn: $0.speaker == "You") })
+        pump.ingest(lines: fresh.map { CoachLine(time: $0.time, text: $0.text, isOwn: $0.speaker == "You", end: $0.end) })
     }
 }

@@ -455,7 +455,7 @@ final class RecorderModel {
         coach.start(
             folder: session.folderURL,
             language: String(transcriptionLanguage.prefix(2)),
-            engine: liveEngine,
+            engine: recordingUsesLive ? liveEngine : nil,
             attendeeCount: meeting?.attendees.count,
             retainsAudio: mode.retainsAudio,
             lines: { live.confirmedLines }

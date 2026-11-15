@@ -45,7 +45,7 @@ final class CoachReviewModel {
 
     private(set) var sessions: [Session] = []
     private(set) var tallies: [DetectorID: LabelTally] = [:]
-    private(set) var playing: String?
+    private(set) var playing: URL?
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private let root: URL?
 
@@ -64,8 +64,10 @@ final class CoachReviewModel {
         reload()
     }
 
+    func isPlaying(_ record: CoachTriggerRecord) -> Bool { record.clipURL != nil && playing == record.clipURL }
+
     func toggle(_ record: CoachTriggerRecord) {
-        if playing == record.id {
+        if isPlaying(record) {
             player?.stop()
             playing = nil
             return
@@ -73,7 +75,7 @@ final class CoachReviewModel {
         guard let url = record.clipURL, let player = try? AVAudioPlayer(contentsOf: url) else { return }
         self.player = player
         player.play()
-        playing = record.id
+        playing = url
     }
 }
 
@@ -163,7 +165,7 @@ struct CoachReviewView: View {
             Button {
                 review.toggle(record)
             } label: {
-                Image(systemName: review.playing == record.id ? "stop.fill" : "play.fill")
+                Image(systemName: review.isPlaying(record) ? "stop.fill" : "play.fill")
             }
             .buttonStyle(.borderless)
             .disabled(record.clipURL == nil)
@@ -180,7 +182,8 @@ struct CoachReviewView: View {
 
     static func clock(_ t: Double) -> String {
         let total = Int(t)
-        return String(format: "%02d:%02d", total / 60, total % 60)
+        guard total >= 3600 else { return String(format: "%02d:%02d", total / 60, total % 60) }
+        return String(format: "%d:%02d:%02d", total / 3600, total % 3600 / 60, total % 60)
     }
 }
 

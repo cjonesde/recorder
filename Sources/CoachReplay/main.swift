@@ -260,7 +260,7 @@ func run(_ options: Options) throws -> ReplaySummary {
         }
         while nextLine < lines.count, lines[nextLine].end + options.lineLag <= t {
             let line = lines[nextLine]
-            coach.ingest(CoachLine(time: line.start, text: line.text, isOwn: line.isOwn))
+            coach.ingest(CoachLine(time: line.start, text: line.text, isOwn: line.isOwn, end: line.end))
             nextLine += 1
         }
         let output = coach.advance()

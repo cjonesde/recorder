@@ -148,7 +148,11 @@ recording, plays its clip and lets you mark it Right or False alarm. The same wi
 check's precision and lets you put it on the bar once it qualifies.
 
 Pace only counts while you are actually speaking, and the ending checks only fire on a fresh
-phrase, so a cue never lights while you listen. If the system audio drops out (macOS rebuilds the
+phrase, so a cue never lights while you listen. Pausing the recording turns off any lit cue.
+Talking over someone only counts as an interruption while their audio is actually playing, so
+starting your turn right after they stop is not one. A sentence that ends in a question mark in
+the live transcript is never scored as a rising statement, even when the transcript line
+arrives several seconds late. If the system audio drops out (macOS rebuilds the
 audio tap now and then), the coach notices the missing stretch, scores it as unknown and lines the
 two streams up again.
 
@@ -162,8 +166,10 @@ What it writes, all next to the recording:
 - `coach.jsonl`: one JSON line per event (session settings, once-per-second raw values per
   check, every trigger with whether it was shown, withheld or shadow, clip decisions). No
   transcript text and nothing about the other side beyond who spoke when.
-- `coach-clips/<id>.m4a`: 8 seconds of your microphone around each flagged moment, only in the
-  audio-keeping modes, and only when the other side was silent for the whole clip. Switching to
+- `coach-clips/<id>.m4a`: your microphone around each flagged moment (8 seconds, or the whole
+  transcript line for "So" at sentence starts, at most 16.5 seconds), only in the audio-keeping
+  modes, and only when the other side was silent for the whole clip. A moment flagged just before
+  you stop gets a clip cut at the end of the recording. Switching to
   transcript only during the call deletes them.
 - `coach-labels.json`: your Right / False alarm labels.
 

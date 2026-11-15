@@ -7,6 +7,7 @@ struct TurnTaking {
     static let themBefore = 0.5
     static let yieldWindow = 1.0
     static let talkThroughShare = 0.2
+    static let audibleRecentSeconds = 0.25
 
     let tuning: CoachTuning
     private var window: [GateState] = []
@@ -33,7 +34,7 @@ struct TurnTaking {
         return Double(own + overlap) / Double(total)
     }
 
-    mutating func observe(t: Double, gate: GateState) {
+    mutating func observe(t: Double, gate: GateState, remoteAudible: Bool) {
         window.append(gate)
         count(gate, by: 1)
         if window.count - windowHead > tuning.frames(Self.windowSeconds) {
@@ -44,7 +45,7 @@ struct TurnTaking {
             window.removeFirst(windowHead)
             windowHead = 0
         }
-        trackInterruptions(t: t, gate: gate)
+        trackInterruptions(t: t, gate: gate, remoteAudible: remoteAudible)
         previous = gate
     }
 
@@ -57,13 +58,14 @@ struct TurnTaking {
         }
     }
 
-    private mutating func trackInterruptions(t: Double, gate: GateState) {
+    private mutating func trackInterruptions(t: Double, gate: GateState, remoteAudible: Bool) {
         if gate == .overlap {
-            if overlapRunFrames == 0 {
+            if previous != .overlap {
                 overlapStartedAfterThem = Double(themRun) * tuning.frameSeconds >= Self.themBefore
                 overlapCounted = false
+                overlapRunFrames = 0
             }
-            overlapRunFrames += 1
+            if remoteAudible { overlapRunFrames += 1 }
             if overlapStartedAfterThem, !overlapCounted, Double(overlapRunFrames) * tuning.frameSeconds >= Self.overlapRun {
                 interruptedThem += 1
                 overlapCounted = true

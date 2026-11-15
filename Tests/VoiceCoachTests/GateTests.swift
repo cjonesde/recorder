@@ -75,4 +75,9 @@ final class GateTests: XCTestCase {
         for _ in 0..<1000 { _ = gate.classify(micDB: -30, desktopDB: [-20], currentDesktopDB: -20) }
         XCTAssertEqual(gate.micFloorDB, before, accuracy: 0.01)
     }
+
+    func testSpeechOverTheirCurrentAudioIsOverlap() {
+        var gate = primed()
+        XCTAssertEqual(classify(&gate, mic: -12, desktop: { _ in -30 }, at: 30), .overlap)
+    }
 }
