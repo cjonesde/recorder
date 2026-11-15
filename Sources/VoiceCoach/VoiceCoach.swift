@@ -33,6 +33,7 @@ public final class VoiceCoach {
     private var desktopBase = 0
     private var deficits: [Int] = []
     private var gate: OwnVoiceGate
+    private var voice: VoiceConfirmer
     private let pitch: PitchTracker
     private var events: [CoachEvent] = []
     private var clips: [ClipRequest] = []
@@ -59,6 +60,7 @@ public final class VoiceCoach {
         micFrames = FrameAnalyzer(tuning: config.tuning)
         desktopFrames = FrameAnalyzer(tuning: config.tuning)
         gate = OwnVoiceGate(tuning: config.tuning)
+        voice = VoiceConfirmer()
         pitch = PitchTracker(tuning: config.tuning)
         pace = PaceDetector(tuning: config.tuning, baselineRate: config.baselineRate)
         energy = EnergyMeter(baselineLevelDB: config.baselineLevelDB)
@@ -175,8 +177,14 @@ public final class VoiceCoach {
         if state == .own, let samples = micFrames.window(endingAt: i, length: pitch.span) {
             f0 = pitch.f0(samples)
         }
-        let t = time(of: i)
-        let analysis = FrameAnalysis(index: i, t: t, micDB: frame.db, gate: state, f0: f0, floorDB: gate.micFloorDB)
+        let analysis = FrameAnalysis(index: i, t: time(of: i), micDB: frame.db, gate: state, f0: f0, floorDB: gate.micFloorDB)
+        for confirmed in voice.push(analysis) { consume(confirmed) }
+    }
+
+    private func consume(_ analysis: FrameAnalysis) {
+        let i = analysis.index
+        let t = analysis.t
+        let state = analysis.gate
         if state == .own { ownSpeechSeconds += tuning.frameSeconds }
         gateCounts[state, default: 0] += 1
         lastGate = state

@@ -17,6 +17,11 @@ let package = Package(
             path: "Sources/VoiceCoach"
         ),
         .executableTarget(
+            name: "coach-replay",
+            dependencies: ["VoiceCoach"],
+            path: "Sources/CoachReplay"
+        ),
+        .executableTarget(
             name: "Recorder",
             dependencies: [
                 "VoiceCoach",

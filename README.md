@@ -124,7 +124,10 @@ Presentation, up to 2 means 1on1, otherwise Group. It is excluded from screen sh
 **It only listens to you while the other side is quiet.** Recorder has no echo cancellation,
 so on desk speakers the microphone also hears the call. The coach compares the microphone with
 the system audio, which is exactly what plays through the speakers, and ignores your microphone
-from 0.3 s before the other side makes sound until 0.5 s after it stops.
+from 0.3 s before the other side makes sound until 0.5 s after it stops. A burst of microphone
+sound only counts as your voice once it contains at least 30 ms of voicing (a measurable
+pitch), so typing, clicks and desk knocks count as silence instead of dragging your pace and
+energy down.
 
 **Everything except pace and energy runs silently at first.** "So" at the start of your
 sentences (English "so", German "so" and "also", Apple engine only), rising statement endings,
@@ -277,6 +280,28 @@ marked, at least 0.8 of them agree, and at least half of the own speech is scora
 gated endings it says "needs ear marks", because too few marks are missing evidence, not a
 failed test. Record three real calls on desk speakers with **Keep audio** first.
 
+### Voice coach replay
+
+`coach-replay` runs the coach core over a finished recording, faster than real time, and
+writes the same `coach.jsonl` events the app writes plus a TSV of every bar change. Use it to
+check thresholds on real calls before changing them. It takes a kept `audio.m4a` (desktop
+left, mic right) or a separate mic file and call audio file, for example from another
+recorder:
+
+```sh
+swift build -c release --product coach-replay
+.build/release/coach-replay --recording ~/Documents/Recordings/<folder>/audio.m4a \
+  --events coach.jsonl --hud hud.tsv
+.build/release/coach-replay --mic Microphone.m4a --desktop Teams.m4a --attendees 6 \
+  --lines lines.json --events coach.jsonl
+```
+
+`--lines` takes a JSON array of `{start, end, text, isOwn}` and delivers each line three
+seconds after it ends (`--line-lag`). `--desktop-offset` shifts the call audio when the two
+files did not start together. The summary on stdout lists own speech, the session rate and
+level, gate shares, and per check how often it triggered, how often the cue was shown and
+for how many seconds it was lit.
+
 ## Main components
 
 | Component | Responsibility |
@@ -290,6 +315,7 @@ failed test. Record three real calls on desk speakers with **Keep audio** first.
 | `StereoMixer` | Align and combine retained channel files |
 | `VoiceCoach` (target) | Dependency-free coach core: gate, detectors, cue policy, event log, clip planning |
 | `CoachAdapter`, `CoachHUDPanel`, `CoachReviewWindow` | Recorder glue for the coach: sample relay, log and clip files, floating bar, labelling |
+| `coach-replay` (target) | Runs the coach core over a finished recording for threshold checks |
 | `TranscriptDocument` | JSON source document and rendered Markdown |
 | `SpeakerProfileStore`, `SpeakerNaming` | Voice profiles, pending voiceprints, and speaker renaming |
 | `Tests/RecorderTests/LegacyWhisper` | Previous live pipeline retained only for regression benchmarks |
