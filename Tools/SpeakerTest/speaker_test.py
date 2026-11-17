@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_COACH = Path.home() / "projects/cjonesde/cj-plugins/plugins/cj-core/skills/talking-head-coaching/scripts/coach.py"
+DEFAULT_COACH = Path.home() / "projects/cjonesde/cj-plugins/plugins/cj-video/skills/talking-head-coaching/scripts/coach.py"
 
 RATE = 16000
 WINDOW = 0.05
