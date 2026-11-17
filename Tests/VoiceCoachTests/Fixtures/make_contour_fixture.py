@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-COACH = Path.home() / "projects/cjonesde/cj-plugins/plugins/cj-core/skills/talking-head-coaching/scripts/coach.py"
+COACH = Path.home() / "projects/cjonesde/cj-plugins/plugins/cj-video/skills/talking-head-coaching/scripts/coach.py"
 
 
 def load_coach(path):
