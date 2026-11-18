@@ -14,12 +14,11 @@ struct EndingsDetector {
     static let minimumRun = 0.5
     static let pause = 0.4
     static let pendingSeconds = 3.0
+    static let riseHoldSeconds = 6.0
     static let questionLookback = 10.0
     static let questionEndWindow = 1.5
     static let questionSlack = 1.0
     static let window = 8
-    static let minimumMeasured = 5
-    static let risingThreshold = 0.30
     static let trailingCount = 3
     static let trailingDropDB = 6.0
     static let trailingSpan = 0.3
@@ -47,9 +46,10 @@ struct EndingsDetector {
     private(set) var questions = 0
     private var questionSpans: [ClosedRange<Double>] = []
     private var lastRising = -Double.infinity
+    private var heldRises: [Double] = []
+    private(set) var flaggedRiseEnd: Double?
     private var lastTrailing = -Double.infinity
     private var committed = 0
-    private var committedAtRising = 0
     private var committedAtTrailing = 0
     private var lastCommit = -Double.infinity
 
@@ -115,6 +115,7 @@ struct EndingsDetector {
         for index in pending.indices where span.contains(pending[index].end) {
             pending[index].question = true
         }
+        heldRises.removeAll { span.contains($0) }
         let answered = recent.filter { span.contains($0.end) }.count
         if answered > 0 {
             recent.removeAll { span.contains($0.end) }
@@ -137,17 +138,19 @@ struct EndingsDetector {
                 recent.append(ending)
                 committed += 1
                 lastCommit = t
+                if ending.contour == .rise { heldRises.append(ending.end) }
             }
         }
         if recent.count > Self.window { recent.removeFirst(recent.count - Self.window) }
         var fired: [DetectorID] = []
-        guard t - lastCommit <= Self.freshness else { return fired }
-        let measured = recent.filter { $0.contour != .unmeasured }
-        if committed > committedAtRising, measured.count >= Self.minimumMeasured, let rate = risingRate, rate > Self.risingThreshold, t - lastRising >= Self.refractory {
+        let ready = heldRises.filter { t >= $0 + Self.riseHoldSeconds }
+        heldRises.removeAll { t >= $0 + Self.riseHoldSeconds }
+        if let end = ready.last, t - lastRising >= Self.refractory {
             lastRising = t
-            committedAtRising = committed
+            flaggedRiseEnd = end
             fired.append(.risingEndings)
         }
+        guard t - lastCommit <= Self.freshness else { return fired }
         if committed > committedAtTrailing, recent.filter(\.trailing).count >= Self.trailingCount, t - lastTrailing >= Self.refractory {
             lastTrailing = t
             committedAtTrailing = committed

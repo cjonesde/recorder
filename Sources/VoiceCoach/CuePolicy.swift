@@ -3,8 +3,8 @@ import Foundation
 public enum CuePolicy {
     public static let showProbability = 0.5
 
-    public static func isCueOffSession(index: Int) -> Bool {
-        guard index > 0 else { return false }
+    public static func isCueOffSession(index: Int, withholding: Bool) -> Bool {
+        guard withholding, index > 0 else { return false }
         switch index {
         case 1...10: return index.isMultiple(of: 5)
         case 11...20: return index.isMultiple(of: 3)

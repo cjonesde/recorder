@@ -6,7 +6,7 @@ import Foundation
 /// start of the recording. `speaker` is a display label ("You"/"Them" from
 /// channel attribution, "Speaker N" from diarization) or nil when unknown.
 struct TranscriptLine: Identifiable, Equatable {
-    let id = UUID()
+    var id = UUID()
     let time: TimeInterval
     let text: String
     let speaker: String?
@@ -26,5 +26,10 @@ struct TranscriptLine: Identifiable, Equatable {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         }
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    func shifted(by offset: TimeInterval) -> TranscriptLine {
+        guard offset != 0 else { return self }
+        return TranscriptLine(id: id, time: time + offset, text: text, speaker: speaker, end: end.map { $0 + offset })
     }
 }

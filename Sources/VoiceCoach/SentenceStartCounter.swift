@@ -4,7 +4,7 @@ struct SentenceStartCounter {
     static let starters: [String: Set<String>] = ["en": ["so"], "de": ["so", "also"]]
     static let windowSentences = 10
     static let minimumSentences = 5
-    static let threshold = 0.3
+    static let threshold = 0.1
     static let refractory = 60.0
     static let terminators: Set<Character> = [".", "!", "?", "…"]
 

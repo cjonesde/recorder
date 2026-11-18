@@ -31,6 +31,7 @@ struct DiagnosticSample: Codable, Equatable, Sendable {
 @Observable
 final class DiagnosticsRecorder {
     static let nonAudioFiles: Set<String> = ["transcript.md", "transcript.json", "debug.json"]
+    static let stopRequestKind = "stop requested"
 
     let engine: LiveEngineKind
     let settings: [String: String]
@@ -78,6 +79,11 @@ final class DiagnosticsRecorder {
         guard !stops.contains(reason) else { return }
         stops.append(reason)
         record("safety stop", detail: reason.rawValue)
+    }
+
+    func recordStopRequest(_ source: StopSource) {
+        guard !events.contains(where: { $0.kind == Self.stopRequestKind }) else { return }
+        record(Self.stopRequestKind, detail: source.label)
     }
 
     func captureStarted(stall: Double) {

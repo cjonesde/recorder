@@ -72,7 +72,7 @@ flowchart LR
     Ring --> Input[Bounded source handoff]
     Mic[AVAudioEngine microphone] --> Input
     Input --> PCM[Owned PCM chunk with erasing deallocator]
-    PCM --> Queue[At most four queued chunks]
+    PCM --> Queue[At most forty queued chunks]
     Queue --> Apple[Apple SpeechAnalyzer]
     Apple --> Text[Provisional and final text]
 ```
@@ -80,11 +80,11 @@ flowchart LR
 | Boundary | Bound and disposal |
 | --- | --- |
 | OS capture buffers | Borrowed from Core Audio / AVAudioEngine; the app does not overwrite memory it does not own. |
-| Desktop ring | Half a second at the capture rate (minimum 4096 frames). Consumed slots are wiped before publishing the read index; remaining storage is wiped on destruction. Overflow is reported as a fatal capture error. |
+| Desktop ring | Transcript-only: half a second at the capture rate (minimum 4096 frames); audio older than that is dropped rather than held. When audio is kept: 10 s, because the audio is on disk anyway. After a stall the whole backlog is written to `desktop.caf` but only its newest 250 ms is forwarded live, since the pump has already padded the gap with silence and older samples would land at the wrong time; frames dropped by a stall longer than 10 s are written as silence. It was half a second in every mode until 2026-11-18, when a writer stall under 10 GB of swap ended a kept-audio recording after 16 minutes. A recording downgraded to transcript-only keeps the 10 s ring, but drains it without persisting and forwards only the newest 250 ms. Consumed slots are wiped before publishing the read index; remaining storage is wiped on destruction. |
 | Capture scratch | Downmix/resampling scratch and desktop writer chunks are wiped after synchronous consumers return. The requested microphone tap size is 1024 frames; actual delivery is controlled by macOS. |
 | Source handoff | Two fixed-capacity channels, each holding at most 500 ms at the analyzer's rate. Resampling scratch is wiped after ingest. Interpolation retains one previous sample per source until the next callback or reset; it is also wiped on resampler destruction. Draining moves remaining samples to the front and wipes the vacated slots. |
 | Mix/submission | The main-actor pump wakes every 50 ms and emits at most 100 ms per chunk. A missing/stale source is padded after roughly 100 ms; the final drain flushes both tails. Desktop plus microphone is clipped to [-1, 1], so a silent source no longer halves the other source. |
-| Analyzer input queue | `AsyncStream.bufferingOldest(4)`. Overflow or unexpected termination stops capture, rather than growing a queue or silently continuing with missing text. |
+| Analyzer input queue | `AsyncStream.bufferingOldest(40)` (`AppleLiveTranscriber.analyzerQueueChunks`): about 2 s at the usual 50 ms chunk size and at most 4 s at the 100 ms maximum. It was four chunks until 2026-11-17, when a 200 ms analyzer pause under memory pressure ended a recording. Overflow or unexpected termination interrupts live text, which restarts inside the same recording with an `[incomplete: …]` marker at the gap. Capture never stops for it. |
 | Submitted PCM | Owned raw allocation wrapped by `AVAudioPCMBuffer(bufferListNoCopy:)`. Its deallocator calls `memset_s` before freeing the sample data. The AudioBufferList descriptor is owned/copied by AVFoundation and is not freed by the callback. |
 | Attribution state | Up to 60 seconds of per-chunk channel-energy sums, with no PCM. Final lines use the dominant channel; ambiguous or expired spans remain unlabeled. There is no live voice embedding or diarization model. |
 | Final text | Only the transcript document and Markdown are persisted in transcript-only mode. Provisional text is replaced as Apple revises it; final text is retained. |
@@ -104,8 +104,12 @@ be repaired later unless the user explicitly chose to retain audio.
 
 ## Errors and transcript integrity
 
-Capture errors, source-handoff overflow, analyzer queue overflow and native recognition
-errors stop capture. Confirmed text remains usable. On unsuccessful finalization, the
+Nothing stops capture except Save, Trash and the silence timeout. Capture errors leave the
+other source recording and the failed one is retried. Source-handoff overflow, analyzer
+queue overflow and native recognition errors end the current live session; the app keeps
+its confirmed lines, starts a new session on the same engine, and shifts the new lines to
+the recording's timeline. A restart that fails is retried with growing delays (1 s doubling
+to 30 s). Confirmed text remains usable. On unsuccessful finalization, the
 last provisional text is saved with an `[unconfirmed]` prefix and an `[incomplete: …]`
 marker records the error. The UI reports that only a partial transcript was saved.
 This avoids presenting a dropped tail as a successful complete transcript.

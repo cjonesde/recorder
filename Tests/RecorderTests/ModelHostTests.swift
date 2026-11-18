@@ -115,6 +115,36 @@ final class ModelHostTests: XCTestCase {
         XCTAssertEqual(overlaps.maxConcurrent, 1)
     }
 
+    func testAwaitReadyStopsWaitingWhenItsTaskIsCancelled() async throws {
+        let host = ModelHost<FakePipe>(
+            isDownloaded: { _ in true },
+            download: { name, _ in URL(fileURLWithPath: "/tmp/\(name)") },
+            load: { name, _ in
+                try await Task.sleep(for: .seconds(30))
+                return FakePipe(name: name)
+            }
+        )
+        let loading = Task { await host.loadModel("slow", downloadIfNeeded: false) }
+        defer { loading.cancel() }
+        for _ in 0..<100 where host.state != .loading("slow") { await Task.yield() }
+        XCTAssertEqual(host.state, .loading("slow"))
+
+        let started = ContinuousClock.now
+        let waiter = Task { () -> Bool in
+            _ = try await host.awaitReady(timeout: 30)
+            return true
+        }
+        waiter.cancel()
+        do {
+            _ = try await waiter.value
+            XCTFail("awaitReady returned a pipe that never loaded")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("expected a cancellation, got \(error)")
+        }
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(2))
+    }
+
     func testAwaitReadyThrowsWhenLoadingFailed() async {
         let host = makeHost(onDisk: ["bad"], failLoadFor: ["bad"])
         await host.loadModel("bad", downloadIfNeeded: false)

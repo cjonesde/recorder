@@ -35,4 +35,40 @@ final class CoachHUDSnapshotTests: XCTestCase {
             try png.write(to: target.appendingPathComponent("hud-\(name).png"))
         }
     }
+
+    @MainActor
+    func testRenderChecksList() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let path = environment["RECORDER_COACH_SNAPSHOT"] else {
+            throw XCTSkip("set RECORDER_COACH_SNAPSHOT to a folder, and optionally RECORDER_COACH_LOG and RECORDER_COACH_AT, to render the checks list")
+        }
+        var monitor = CoachMonitor()
+        var state = CoachHUDState.idle(.oneOnOne)
+        if let log = environment["RECORDER_COACH_LOG"] {
+            let until = environment["RECORDER_COACH_AT"].flatMap(Double.init) ?? .infinity
+            let decoder = JSONDecoder()
+            let events = try String(contentsOfFile: log, encoding: .utf8)
+                .split(separator: "\n")
+                .compactMap { try? decoder.decode(CoachEvent.self, from: Data($0.utf8)) }
+                .filter { $0.t <= until }
+            _ = monitor.absorb(events)
+            state.gate = .own
+            state.energy = events.last { $0.detector == .energy }?.values["energy"]
+        }
+        let content = VStack(spacing: CoachHUDPanel.checksGap) {
+            CoachHUDContent(state: state, paused: false)
+            CoachChecksList(lines: CoachCheckLine.lines(monitor: monitor, preset: .oneOnOne, promoted: [.pace]))
+        }
+        .frame(width: CoachHUDPanel.expandedSize.width, height: CoachHUDPanel.expandedSize.height, alignment: .top)
+        .padding(10)
+        .background(Color(white: 0.85))
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.nsImage)
+        let tiff = try XCTUnwrap(image.tiffRepresentation)
+        let png = try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
+        let target = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try png.write(to: target.appendingPathComponent("hud-checks.png"))
+    }
 }

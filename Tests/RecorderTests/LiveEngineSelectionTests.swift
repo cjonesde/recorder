@@ -16,6 +16,8 @@ class FakeLiveEngine: LiveSpeechEngine {
     var labelSpeakers = true
     var onFailure: (() -> Void)?
     var onPrepare: (() -> Void)?
+    var nextPrepareError: Error?
+    var submittedThrough: Double = 0
     nonisolated let inbox = StreamingAudioInput()
 
     let prepareError: Error?
@@ -48,6 +50,10 @@ class FakeLiveEngine: LiveSpeechEngine {
         onPrepare?()
         if let prepareDelay { try await Task.sleep(for: prepareDelay) }
         if let prepareError { throw prepareError }
+        if let nextPrepareError {
+            self.nextPrepareError = nil
+            throw nextPrepareError
+        }
         let firstLoad = !isLoaded
         isLoaded = true
         return PreparationInfo(loadSeconds: 0, firstLoad: firstLoad, modelBytesOnDisk: nil, computeUnits: "fake")
@@ -81,7 +87,7 @@ class FakeLiveEngine: LiveSpeechEngine {
     }
 
     func diagnostics() -> EngineDiagnostics {
-        EngineDiagnostics(submittedThroughSeconds: 0, latestProvisionalEnd: nil, latestFinalEnd: nil,
+        EngineDiagnostics(submittedThroughSeconds: submittedThrough, latestProvisionalEnd: nil, latestFinalEnd: nil,
                           heldAudioSeconds: nil, heldAudioQuality: .unknown, rows: [])
     }
 

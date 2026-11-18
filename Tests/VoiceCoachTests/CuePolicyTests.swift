@@ -3,8 +3,12 @@ import XCTest
 
 final class CuePolicyTests: XCTestCase {
     func testCueOffScheduleFades() {
-        for off in [5, 10, 12, 15, 18, 22, 24] { XCTAssertTrue(CuePolicy.isCueOffSession(index: off), "\(off)") }
-        for on in [1, 2, 4, 11, 13, 21, 23] { XCTAssertFalse(CuePolicy.isCueOffSession(index: on), "\(on)") }
+        for off in [5, 10, 12, 15, 18, 22, 24] { XCTAssertTrue(CuePolicy.isCueOffSession(index: off, withholding: true), "\(off)") }
+        for on in [1, 2, 4, 11, 13, 21, 23] { XCTAssertFalse(CuePolicy.isCueOffSession(index: on, withholding: true), "\(on)") }
+    }
+
+    func testNoCueOffSessionsOnceSkippingIsSwitchedOff() {
+        for index in 1...40 { XCTAssertFalse(CuePolicy.isCueOffSession(index: index, withholding: false), "\(index)") }
     }
 
     func testShadowWhenNotPromoted() {

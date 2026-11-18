@@ -109,6 +109,20 @@ final class LocalTranscriptionEngine {
         await selection.value
     }
 
+    @discardableResult
+    func releaseEngine() async -> Bool {
+        let earlier = pendingSelection
+        let release = Task { @MainActor [weak self] () -> Bool in
+            await earlier?.value
+            guard let self, !self.engine.isSessionActive else { return false }
+            let wasLoaded = self.engine.isLoaded
+            await self.engine.unload()
+            return wasLoaded
+        }
+        pendingSelection = Task { _ = await release.value }
+        return await release.value
+    }
+
     private func replaceEngine(with kind: LiveEngineKind) async {
         guard kind != engine.kind else { return }
         let previous = engine
@@ -147,8 +161,17 @@ final class LocalTranscriptionEngine {
 
     // MARK: Live surface
 
-    var confirmedLines: [TranscriptLine] { engine.confirmedLines }
+    var confirmedLines: [TranscriptLine] {
+        guard carriesEarlierSessions else { return engine.confirmedLines }
+        return earlierLines + engine.confirmedLines.map { $0.shifted(by: sessionOffset) }
+    }
     var hypothesis: String { engine.hypothesis }
+    private(set) var inRecordingSession = false
+    private(set) var restarts = 0
+    private var earlierLines: [TranscriptLine] = []
+    private var sessionOffset: TimeInterval = 0
+    @ObservationIgnored private var interruptedAt: TimeInterval?
+    private var carriesEarlierSessions: Bool { !earlierLines.isEmpty || sessionOffset != 0 }
     var isSessionActive: Bool { engine.isSessionActive }
     var revision: Int { engine.revision }
     var hasText: Bool { !confirmedLines.isEmpty || !hypothesis.isEmpty }
@@ -162,16 +185,63 @@ final class LocalTranscriptionEngine {
     var inbox: StreamingAudioInput { engine.inbox }
 
     func beginSession(language: String, progress: @escaping @Sendable (Double?) -> Void = { _ in }) async throws {
+        resetEarlierSessions()
         let info = try await engine.prepare(language: language, progress: progress)
         lastPreparation = info
         try Task.checkCancellation()
         try engine.startSession()
+        inRecordingSession = true
     }
 
-    func cancelSession() { engine.cancelSession() }
+    func restartSession(language: String) async throws {
+        guard inRecordingSession else { throw CancellationError() }
+        if engine.isSessionActive {
+            let fedSeconds = engine.diagnostics().submittedThroughSeconds
+            let stoppedAt = ProcessInfo.processInfo.systemUptime
+            let partial = await engine.endSession()
+            earlierLines += partial.lines.map { $0.shifted(by: sessionOffset) }
+            sessionOffset += fedSeconds
+            interruptedAt = interruptedAt ?? stoppedAt
+        }
+        try Task.checkCancellation()
+        guard inRecordingSession else { throw CancellationError() }
+        _ = try await engine.prepare(language: language, progress: { _ in })
+        try Task.checkCancellation()
+        guard inRecordingSession else { throw CancellationError() }
+        try engine.startSession()
+        if let since = interruptedAt {
+            sessionOffset += ProcessInfo.processInfo.systemUptime - since
+            interruptedAt = nil
+        }
+        restarts += 1
+    }
+
+    func cancelSession() {
+        engine.cancelSession()
+        inRecordingSession = false
+        resetEarlierSessions()
+    }
 
     func endSession() async -> LiveSessionResult {
-        await engine.endSession()
+        let wasActive = engine.isSessionActive
+        let result = await engine.endSession()
+        inRecordingSession = false
+        defer { resetEarlierSessions() }
+        guard carriesEarlierSessions else { return result }
+        let current = wasActive ? result.lines.map { $0.shifted(by: sessionOffset) } : []
+        return LiveSessionResult(
+            lines: earlierLines + current,
+            complete: wasActive && result.complete,
+            stopReason: result.stopReason,
+            restarts: restarts
+        )
+    }
+
+    private func resetEarlierSessions() {
+        earlierLines = []
+        sessionOffset = 0
+        interruptedAt = nil
+        restarts = 0
     }
 
     func transcript(includeHypothesis: Bool) -> String {
@@ -233,7 +303,7 @@ final class LocalTranscriptionEngine {
         var diarized: [DiarizedSpan] = []
         var centroids: [Int: [Float]] = [:]
         if labelSpeakers, !desktop.isEmpty {
-            (diarized, centroids) = await diarize(desktopSamples)
+            (diarized, centroids) = try await diarize(desktopSamples)
         }
 
         return OfflineTranscription.build(
@@ -256,7 +326,7 @@ final class LocalTranscriptionEngine {
         var diarized: [DiarizedSpan] = []
         var centroids: [Int: [Float]] = [:]
         if labelSpeakers, !segments.isEmpty {
-            (diarized, centroids) = await diarize(samples)
+            (diarized, centroids) = try await diarize(samples)
         }
 
         return OfflineTranscription.build(
@@ -283,7 +353,7 @@ final class LocalTranscriptionEngine {
 
     /// Diarization is never allowed to fail the transcription: a failure costs the
     /// speaker labels and nothing else.
-    private func diarize(_ samples: [Float]) async -> ([DiarizedSpan], [Int: [Float]]) {
+    private func diarize(_ samples: [Float]) async throws -> ([DiarizedSpan], [Int: [Float]]) {
         do {
             let kit = try await diarizer()
             let result = try await kit.diarize(audioArray: samples)
@@ -298,6 +368,7 @@ final class LocalTranscriptionEngine {
             }
             return (spans, result.speakerCentroidEmbeddings)
         } catch {
+            if Task.isCancelled { throw CancellationError() }
             Self.log.error("diarization failed, transcript left unlabeled: \(error.localizedDescription)")
             return ([], [:])
         }

@@ -12,7 +12,12 @@ final class RecorderModel {
 
     // MARK: - Observable UI state
 
-    var state: RecorderState = .idle
+    var state: RecorderState = .idle {
+        didSet {
+            if state == .idle { transcriptions.release() } else { transcriptions.hold() }
+        }
+    }
+    let transcriptions = TranscriptionQueue<PendingTranscription>()
     var desktopLevel: Float = 0      // 0..1 meter (LEFT / desktop)
     var micLevel: Float = 0          // 0..1 meter (RIGHT / mic)
     var meetings: [Meeting] = []
@@ -42,6 +47,10 @@ final class RecorderModel {
         self.whisperLoader = whisperLoader
         self.fileTranscriber = fileTranscriber
         self.whisperUnloader = whisperUnloader
+        transcriptions.perform = { [weak self] pending in
+            guard let self else { return .finished }
+            return await self.runTranscription(pending)
+        }
     }
 
     // MARK: - Persisted preferences (mirrored to UserDefaults via Preferences)
@@ -156,8 +165,8 @@ final class RecorderModel {
     @ObservationIgnored private var startupTask: Task<Void, Never>?
     @ObservationIgnored private var didAppear = false
 
-    var canStartRecording: Bool { state == .idle && transcriptionState != .running }
-    var canChangeLiveEngine: Bool { state == .idle && transcriptionState != .running }
+    var canStartRecording: Bool { state == .idle }
+    var canChangeLiveEngine: Bool { state == .idle }
     var isCapturing: Bool { state == .recording || state == .paused }
 
     @ObservationIgnored private var elapsedTimer: Timer?
@@ -171,8 +180,12 @@ final class RecorderModel {
     /// `audioHandlingMode` after a mid-recording downgrade.
     @ObservationIgnored private var activeMode: AudioHandlingMode = .default
 
+    @ObservationIgnored private var liveRestartTask: Task<Void, Never>?
+    @ObservationIgnored private var lastLiveRestartAt: TimeInterval?
+    @ObservationIgnored private var liveFailureStreak = 0
+
     /// Everything needed to (re)run a transcription, captured at save time.
-    struct PendingTranscription {
+    struct PendingTranscription: Identifiable {
         let audioURL: URL?
         let folderURL: URL
         let meetingTitle: String?
@@ -181,8 +194,14 @@ final class RecorderModel {
         var liveEngineName: String? = nil
         var diagnostics: DiagnosticsRecorder? = nil
         var reportLanguage: String? = nil
+
+        var id: URL { folderURL }
+
+        var displayTitle: String {
+            meetingTitle ?? "Recording \(startedAt.formatted(date: .omitted, time: .shortened))"
+        }
     }
-    @ObservationIgnored private var lastTranscription: PendingTranscription?
+    private(set) var lastTranscription: PendingTranscription?
 
     // MARK: - Lifecycle
 
@@ -220,7 +239,7 @@ final class RecorderModel {
         notifications.onStopRequested = { [weak self] in
             guard let self else { return }
             if self.state != .idle {
-                self.saveAndStop()
+                self.saveAndStop(source: .meetingEndNotification)
             }
         }
 
@@ -232,12 +251,12 @@ final class RecorderModel {
     /// app bundle and therefore cannot run under the test runner.
     func configureCaptures() {
         // Surface fatal capture errors to the UI.
-        tap.onFatalError = { [weak self] error in
+        tap.onCaptureError = { [weak self] error in
             DispatchQueue.main.async {
                 self?.handleCaptureFailure(error)
             }
         }
-        mic.onFatalError = { [weak self] error in
+        mic.onCaptureError = { [weak self] error in
             DispatchQueue.main.async {
                 self?.handleCaptureFailure(error)
             }
@@ -257,20 +276,87 @@ final class RecorderModel {
         }
 
         live.onFailure = { [weak self] in
-            guard let self else { return }
-            if let reason = self.live.engine.stopReason { self.diagnostics?.recordStop(reason) }
-            guard self.isCapturing else { return }
-            self.saveAndStop()
+            self?.handleLiveEngineFailure()
         }
+
+        tap.onGap = { [weak self] gap, rate in
+            DispatchQueue.main.async {
+                self?.noteDesktopGap(gap, rate: rate)
+            }
+        }
+    }
+
+    private func noteDesktopGap(_ gap: CaptureRingDrain.Gap, rate: Double) {
+        guard isCapturing, rate > 0 else { return }
+        let heldBack = Double(gap.heldBackFromLiveFrames) / rate
+        let lost = Double(gap.lostFrames) / rate
+        let detail = String(format: "%.2f s kept out of live text, %.2f s lost", heldBack, lost)
+        Self.log.notice("desktop audio stalled: \(detail, privacy: .public)")
+        diagnostics?.record("desktop audio stalled", detail: detail)
+        if lost > 0 {
+            statusMessage = String(format: "Desktop audio stalled for %.1f s. Recording continues.", lost)
+        }
+    }
+
+    private func handleLiveEngineFailure() {
+        let engine = live.engine
+        if let reason = engine.stopReason { diagnostics?.recordStop(reason) }
+        guard isCapturing, live.inRecordingSession else { return }
+        let detail = engine.failureMessage ?? engine.stopReason?.rawValue ?? "unknown"
+        Self.log.error("live text interrupted, restarting: \(detail, privacy: .public)")
+        diagnostics?.record("live text interrupted, restarting", detail: detail)
+        statusMessage = "Live text interrupted. Restarting it; recording continues."
+        let now = ProcessInfo.processInfo.systemUptime
+        let failedSoonAfterRestart = lastLiveRestartAt.map { now - $0 < Self.stableLiveSessionSeconds } ?? false
+        liveFailureStreak = failedSoonAfterRestart ? liveFailureStreak + 1 : 0
+        restartLiveText(attempt: liveFailureStreak)
+    }
+
+    static let stableLiveSessionSeconds: TimeInterval = 60
+
+    private func restartLiveText(attempt: Int, retrying: Bool = false) {
+        guard liveRestartTask == nil || retrying else { return }
+        let language = transcriptionLanguage
+        liveRestartTask = Task { [weak self] in
+            if attempt > 0 {
+                try? await Task.sleep(for: self?.liveRestartDelay(attempt) ?? .zero)
+            }
+            guard let self, !Task.isCancelled, self.isCapturing, self.live.inRecordingSession else { return }
+            do {
+                try await self.live.restartSession(language: language)
+                self.liveRestartTask = nil
+                self.lastLiveRestartAt = ProcessInfo.processInfo.systemUptime
+                guard self.isCapturing else { return }
+                self.diagnostics?.record("live text restarted", detail: "attempt \(attempt + 1)")
+                self.statusMessage = "Live text restarted. Recording continues."
+            } catch {
+                guard !Task.isCancelled, self.isCapturing, self.live.inRecordingSession else {
+                    self.liveRestartTask = nil
+                    return
+                }
+                Self.log.error("live text restart failed: \(error.localizedDescription, privacy: .public)")
+                self.diagnostics?.record("live text restart failed", detail: error.localizedDescription)
+                self.statusMessage = "Live text could not restart yet (\(error.localizedDescription)). Recording continues; retrying."
+                self.restartLiveText(attempt: attempt + 1, retrying: true)
+            }
+        }
+    }
+
+    static func liveRestartDelay(attempt: Int) -> Duration {
+        .seconds(min(30, 1 << min(attempt, 5)))
+    }
+
+    @ObservationIgnored var liveRestartDelay: (Int) -> Duration = { RecorderModel.liveRestartDelay(attempt: $0) }
+
+    func reportCaptureErrorForTesting(_ error: Error) {
+        handleCaptureFailure(error)
     }
 
     private func handleCaptureFailure(_ error: Error) {
         guard isCapturing else { return }
-        diagnostics?.record("capture failed", detail: error.localizedDescription)
-        if let stop = error as? LiveStopError { diagnostics?.recordStop(stop.reason) }
-        if live.isSessionActive { live.engine.captureFailed(error) }
-        else { saveAndStop() }
-        statusMessage = "Capture stopped: \(error.localizedDescription)"
+        Self.log.error("capture problem, recording continues: \(error.localizedDescription, privacy: .public)")
+        diagnostics?.record("capture problem, recording continues", detail: error.localizedDescription)
+        statusMessage = "\(error.localizedDescription) Recording continues."
     }
 
     /// Pull persisted preferences into the observable properties. The `didSet`
@@ -296,6 +382,10 @@ final class RecorderModel {
 
     func startRecording(meeting: Meeting?) {
         guard canStartRecording else { return }
+        liveRestartTask?.cancel()
+        liveRestartTask = nil
+        lastLiveRestartAt = nil
+        liveFailureStreak = 0
 
         let mode = audioHandlingMode
         guard !mode.producesNothing(liveTranscriptionEnabled: liveTranscriptionEnabled) else {
@@ -374,10 +464,7 @@ final class RecorderModel {
         if diagnostics != nil { diagnosticsFolder = session.folderURL }
 
         // Clear any previous recording's transcription UI.
-        transcriptionState = .idle
-        lastTranscriptText = nil
-        lastTranscriptURL = nil
-        lastTranscription = nil
+        clearTranscriptCard()
 
         // Silence monitor (auto-stop after prolonged silence on both channels).
         // Only armed when the user has auto-stop enabled.
@@ -387,7 +474,7 @@ final class RecorderModel {
                 timeout: silenceTimeout,
                 onTimeout: { [weak self] in
                     // onTimeout is invoked on MAIN per contract.
-                    self?.saveAndStop()
+                    self?.saveAndStop(source: .silenceTimeout)
                 }
             )
         } else {
@@ -524,8 +611,11 @@ final class RecorderModel {
         }
     }
 
-    func saveAndStop() {
+    func saveAndStop(source: StopSource = .panelSave) {
         guard isCapturing, let session = currentSession else { return }
+
+        Self.log.notice("stop requested: \(source.label, privacy: .public)")
+        diagnostics?.recordStopRequest(source)
 
         let coachSummary = coach.stop()
         let desktopResult = tap.stop()
@@ -547,8 +637,12 @@ final class RecorderModel {
         // be written, so an off toggle or a slow model never delays the save.
         let diagnostics = self.diagnostics
         let reportLanguage = transcriptionLanguage
-        let liveTask: Task<LiveSessionResult, Never>? = live.isSessionActive
+        let pendingRestart = liveRestartTask
+        pendingRestart?.cancel()
+        liveRestartTask = nil
+        let liveTask: Task<LiveSessionResult, Never>? = live.inRecordingSession
             ? Task { [live, weak self] in
+                await pendingRestart?.value
                 let finalizingSince = ProcessInfo.processInfo.systemUptime
                 let result = await live.endSession()
                 if let reason = result.stopReason { diagnostics?.recordStop(reason) }
@@ -574,8 +668,7 @@ final class RecorderModel {
                 diagnostics: diagnostics,
                 reportLanguage: reportLanguage
             )
-            lastTranscription = pending
-            transcriptionState = .running
+            claimTranscriptCard(pending, .running)
             statusMessage = "Finishing the transcript…"
             Task { [weak self] in
                 guard let self else { return }
@@ -601,7 +694,6 @@ final class RecorderModel {
             return
         }
 
-        statusMessage = "Mixing…"
         let pending = PendingTranscription(
             audioURL: outputURL,
             folderURL: folderURL,
@@ -613,13 +705,12 @@ final class RecorderModel {
             reportLanguage: reportLanguage
         )
         let wantsTranscript = liveTranscriptionEnabled || mode.runsPolishPass
-        if wantsTranscript {
-            transcriptionState = .running
-        }
+        let runsPolish = mode.runsPolishPass
+        claimTranscriptCard(pending, wantsTranscript ? .running : .idle)
+        statusMessage = liveTask == nil ? "Mixing…" : "Finishing the transcript…"
 
         // Mix off the main actor; keep raw CAFs regardless of outcome.
-        Task.detached(priority: .utility) {
-            var mixError: Error? = nil
+        let mix = Task.detached(priority: .utility) { () -> String? in
             do {
                 try StereoMixer.mix(
                     desktopURL: desktopURL,
@@ -628,50 +719,79 @@ final class RecorderModel {
                     micResult: micResult,
                     outputURL: outputURL
                 )
+                return nil
             } catch {
-                mixError = error
+                return error.localizedDescription
             }
+        }
 
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.lastTranscription = pending
-                self.statusMessage = mixError == nil
-                    ? "Saved \(outputURL.lastPathComponent)"
-                    : "Mix failed (raw files kept): \(mixError!.localizedDescription)"
-                self.refreshRecordings()
-                if !wantsTranscript {
-                    self.state = .idle
-                    self.transcriptionState = .idle
-                    if mixError == nil {
-                        self.statusMessage = "Saved \(outputURL.lastPathComponent) · transcription off"
-                    }
-                }
-            }
-            guard wantsTranscript else { return }
-
+        Task { [weak self] in
             let liveResult = await liveTask?.value
-
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.state = .idle
-                if let liveResult, !liveResult.isEmpty, liveResult.complete {
-                    self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: mixError != nil)
-                    if mode.runsPolishPass, mixError == nil { self.startTranscription(pending) }
-                } else if mixError == nil, mode.runsPolishPass {
-                    self.startTranscription(pending)
-                } else if let liveResult, !liveResult.isEmpty {
-                    self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: true)
-                } else {
-                    self.transcriptionState = .failed(
-                        "No live transcript, and the audio mix failed, so there is nothing to transcribe."
-                    )
-                }
+            guard let self else { return }
+            if let liveResult, !liveResult.isEmpty {
+                self.writeLiveTranscript(liveResult.lines, pending: pending, keepStatus: true)
+                self.statusMessage = liveResult.complete
+                    ? "Transcript saved, saving audio…"
+                    : "Partial transcript saved; speech recognition stopped. Saving audio…"
             }
+            self.state = .idle
+            let mixError = await mix.value
+            self.finishSavingAudio(
+                pending,
+                liveResult: liveResult,
+                mixError: mixError,
+                wantsTranscript: wantsTranscript,
+                runsPolish: runsPolish
+            )
         }
 
         currentSession = nil
         activeMeeting = nil
         silenceMonitor = nil
+    }
+
+    private func finishSavingAudio(
+        _ pending: PendingTranscription,
+        liveResult: LiveSessionResult?,
+        mixError: String?,
+        wantsTranscript: Bool,
+        runsPolish: Bool
+    ) {
+        refreshRecordings()
+        let audioName = pending.audioURL?.lastPathComponent ?? "audio"
+        let wroteLive = liveResult.map { !$0.isEmpty } ?? false
+        if let mixError {
+            Self.log.error("mix failed: \(mixError, privacy: .public)")
+            let status = "Mix failed (raw files kept): \(mixError)"
+            if wantsTranscript && !wroteLive {
+                reportTranscriptionFailure(
+                    "No live transcript, and the audio mix failed, so there is nothing to transcribe.",
+                    status: status,
+                    for: pending
+                )
+            } else {
+                announce(status, about: pending)
+            }
+            return
+        }
+        if runsPolish {
+            announce(wroteLive ? "Transcript saved; a local pass will refine it" : "Saved \(audioName); transcribing locally next", about: pending)
+            transcriptions.enqueue(pending)
+            return
+        }
+        guard wantsTranscript else {
+            announce("Saved \(audioName) · transcription off", about: pending)
+            return
+        }
+        guard wroteLive else {
+            reportTranscriptionFailure(
+                "Nothing was transcribed. The audio is saved, so you can transcribe it from Recent recordings.",
+                status: "Saved \(audioName)",
+                for: pending
+            )
+            return
+        }
+        announce(liveResult?.complete == false ? "Partial transcript and \(audioName) saved" : "Transcript and \(audioName) saved", about: pending)
     }
 
     func trashAndStop() {
@@ -690,6 +810,8 @@ final class RecorderModel {
         coach.stop(discard: true)
         _ = tap.stop()
         _ = mic.stop()
+        liveRestartTask?.cancel()
+        liveRestartTask = nil
         live.cancelSession()
 
         cancelTimersAndAlerts()
@@ -703,10 +825,7 @@ final class RecorderModel {
         activeMeeting = nil
         silenceMonitor = nil
         statusMessage = "Discarded"
-        transcriptionState = .idle
-        lastTranscriptText = nil
-        lastTranscriptURL = nil
-        lastTranscription = nil
+        clearTranscriptCard()
         refreshRecordings()
     }
 
@@ -887,106 +1006,175 @@ final class RecorderModel {
     /// Re-run the last transcription (offline, from the saved audio).
     func retryTranscription() {
         guard let pending = lastTranscription else { return }
-        startTranscription(pending)
+        requestTranscription(pending)
     }
 
-    /// Transcribe a saved recording's audio with the local model.
-    private func startTranscription(_ pending: PendingTranscription) {
-        lastTranscription = pending
-        lastTranscriptText = nil
-        lastTranscriptURL = nil
+    private func requestTranscription(_ pending: PendingTranscription) {
+        guard !transcriptions.contains(pending.id) else { return }
+        if state == .idle { claimTranscriptCard(pending, .running) }
+        transcriptions.enqueue(pending)
+    }
 
-        transcriptionState = .running
-        statusMessage = "Transcribing locally…"
-
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.unloadOfflineModels() }
-            guard let audioURL = pending.audioURL else {
-                self.transcriptionState = .failed("This recording kept no audio, so it cannot be transcribed again.")
-                return
+    private func runTranscription(_ pending: PendingTranscription) async -> QueuedJobOutcome {
+        defer { unloadOfflineModels() }
+        guard let audioURL = pending.audioURL else {
+            reportTranscriptionFailure(
+                "This recording kept no audio, so it cannot be transcribed again.",
+                status: nil,
+                for: pending
+            )
+            return .finished
+        }
+        do {
+            await unloadLiveEngineForPolish(pending)
+            try Task.checkCancellation()
+            if let whisperLoader {
+                await whisperLoader(whisperModel)
+            } else {
+                await live.loadModel(whisperModel, downloadIfNeeded: true)
             }
-            do {
-                await self.unloadLiveEngineForPolish(pending)
-                if let whisperLoader = self.whisperLoader {
-                    await whisperLoader(self.whisperModel)
-                } else {
-                    await self.live.loadModel(self.whisperModel, downloadIfNeeded: true)
-                }
-                let offline: OfflineTranscription
-                if let fileTranscriber = self.fileTranscriber {
-                    offline = try await fileTranscriber(audioURL)
-                } else {
-                    offline = try await self.live.transcribeFile(audioURL)
-                }
-                guard !offline.lines.isEmpty else {
-                    self.transcriptionState = .failed("The model returned an empty transcript (silent audio?).")
-                    self.statusMessage = "Transcription produced no text"
-                    return
-                }
-                var names = offline.speakerNames
-                var centroidsID: String?
-
-                if self.voiceProfilesEnabled, !offline.clusters.isEmpty {
-                    let assignments = SpeakerNaming.resolve(
-                        clusters: offline.clusters,
-                        defaultNames: offline.speakerNames,
-                        profiles: self.speakerStore.profiles
-                    )
-                    for (id, assignment) in assignments {
-                        names[id] = assignment.name
-                    }
-
-                    // `appliedProfileID` stays nil even where a profile matched: an
-                    // automatic match names a speaker but never writes a voiceprint, so
-                    // the database only ever grows from a correction the user saw. It also
-                    // keeps confirming a correct guess an enrollment rather than a no-op.
-                    let voiceprints = PendingSpeakers(
-                        id: UUID().uuidString,
-                        createdAt: Date(),
-                        clusters: offline.clusters.reduce(into: [:]) { result, entry in
-                            result[entry.key] = PendingSpeakers.Cluster(
-                                vector: entry.value.centroid,
-                                speechSeconds: entry.value.speechSeconds,
-                                appliedProfileID: nil
-                            )
-                        }
-                    )
-                    do {
-                        try self.speakerStore.writePending(voiceprints)
-                        centroidsID = voiceprints.id
-                    } catch {
-                        Self.log.error("could not store voiceprints: \(error.localizedDescription)")
-                    }
-                }
-
-                var document = TranscriptDocument(
-                    meetingTitle: pending.meetingTitle,
-                    attendees: pending.attendees,
-                    startedAt: pending.startedAt,
-                    audioName: audioURL.lastPathComponent,
-                    model: self.live.loadedModelName ?? self.live.modelName,
-                    isPolished: true,
-                    lines: offline.lines.map {
-                        TranscriptDocument.StoredLine(time: $0.time, text: $0.text, speakerID: $0.speaker)
-                    },
-                    speakerNames: names,
-                    speakerCentroidsID: centroidsID
+            try Task.checkCancellation()
+            let offline: OfflineTranscription
+            if let fileTranscriber {
+                offline = try await fileTranscriber(audioURL)
+            } else {
+                offline = try await live.transcribeFile(audioURL)
+            }
+            guard !offline.lines.isEmpty else {
+                reportTranscriptionFailure(
+                    "The model returned an empty transcript (silent audio?).",
+                    status: "Transcription produced no text",
+                    for: pending
                 )
-                document.liveEngine = pending.liveEngineName
-                self.writeTranscript(document: document, pending: pending, keepStatus: false)
-            } catch {
-                let message = RecorderModel.describeTranscriptionError(error)
-                self.transcriptionState = .failed(message)
-                self.statusMessage = "Transcription failed"
+                return .finished
             }
+            var names = offline.speakerNames
+            var centroidsID: String?
+
+            if voiceProfilesEnabled, !offline.clusters.isEmpty {
+                let assignments = SpeakerNaming.resolve(
+                    clusters: offline.clusters,
+                    defaultNames: offline.speakerNames,
+                    profiles: speakerStore.profiles
+                )
+                for (id, assignment) in assignments {
+                    names[id] = assignment.name
+                }
+
+                // `appliedProfileID` stays nil even where a profile matched: an
+                // automatic match names a speaker but never writes a voiceprint, so
+                // the database only ever grows from a correction the user saw. It also
+                // keeps confirming a correct guess an enrollment rather than a no-op.
+                let voiceprints = PendingSpeakers(
+                    id: UUID().uuidString,
+                    createdAt: Date(),
+                    clusters: offline.clusters.reduce(into: [:]) { result, entry in
+                        result[entry.key] = PendingSpeakers.Cluster(
+                            vector: entry.value.centroid,
+                            speechSeconds: entry.value.speechSeconds,
+                            appliedProfileID: nil
+                        )
+                    }
+                )
+                do {
+                    try speakerStore.writePending(voiceprints)
+                    centroidsID = voiceprints.id
+                } catch {
+                    Self.log.error("could not store voiceprints: \(error.localizedDescription)")
+                }
+            }
+
+            var document = TranscriptDocument(
+                meetingTitle: pending.meetingTitle,
+                attendees: pending.attendees,
+                startedAt: pending.startedAt,
+                audioName: audioURL.lastPathComponent,
+                model: live.loadedModelName ?? live.modelName,
+                isPolished: true,
+                lines: offline.lines.map {
+                    TranscriptDocument.StoredLine(time: $0.time, text: $0.text, speakerID: $0.speaker)
+                },
+                speakerNames: names,
+                speakerCentroidsID: centroidsID
+            )
+            document.liveEngine = pending.liveEngineName
+            writeTranscript(document: document, pending: pending, keepStatus: false)
+            return .finished
+        } catch {
+            if Task.isCancelled { return .interrupted }
+            reportTranscriptionFailure(
+                Self.describeTranscriptionError(error),
+                status: "Transcription failed",
+                for: pending
+            )
+            return .finished
         }
     }
 
+    private func claimTranscriptCard(_ pending: PendingTranscription, _ cardState: TranscriptionState) {
+        lastTranscription = pending
+        lastTranscriptText = nil
+        lastTranscriptURL = nil
+        lastDocument = nil
+        transcriptionState = cardState
+    }
+
+    private func clearTranscriptCard() {
+        lastTranscription = nil
+        lastTranscriptText = nil
+        lastTranscriptURL = nil
+        lastDocument = nil
+        transcriptionState = .idle
+    }
+
+    private func cardShows(_ pending: PendingTranscription) -> Bool {
+        if let shown = lastTranscription { return shown.id == pending.id }
+        return state == .idle
+    }
+
+    private func announce(_ message: String, about pending: PendingTranscription) {
+        guard state == .idle else { return }
+        statusMessage = lastTranscription?.id == pending.id
+            ? message
+            : "\(pending.displayTitle): \(message)"
+    }
+
+    private func reportTranscriptionFailure(_ message: String, status: String?, for pending: PendingTranscription) {
+        Self.log.error("transcription failed: \(message, privacy: .public)")
+        guard cardShows(pending) else {
+            announce("transcription failed. \(message)", about: pending)
+            return
+        }
+        lastTranscription = pending
+        transcriptionState = .failed(message)
+        if let status { statusMessage = status }
+    }
+
+    var cardAwaitsLocalTranscription: Bool {
+        guard let shown = lastTranscription else { return false }
+        return transcriptions.contains(shown.id)
+    }
+
+    var cardProgressMessage: String {
+        guard let shown = lastTranscription else { return "Finishing the transcript…" }
+        if transcriptions.running?.id == shown.id { return "Transcribing locally…" }
+        if transcriptions.contains(shown.id) { return "Waiting to transcribe locally…" }
+        return "Finishing the transcript…"
+    }
+
+    var transcriptionQueueSummary: String? {
+        let recording = state == .preparing || isCapturing
+        if recording {
+            return TranscriptionQueueSummary.text(running: nil, waiting: transcriptions.count, recording: true)
+        }
+        guard let running = transcriptions.running else { return nil }
+        let othersWaiting = transcriptions.waiting.count
+        if running.id == lastTranscription?.id, transcriptionState == .running, othersWaiting == 0 { return nil }
+        return TranscriptionQueueSummary.text(running: running.displayTitle, waiting: othersWaiting, recording: false)
+    }
+
     func unloadLiveEngineForPolish(_ pending: PendingTranscription) async {
-        guard !live.isSessionActive else { return }
-        let wasLoaded = live.engine.isLoaded
-        await live.engine.unload()
+        let wasLoaded = await live.releaseEngine()
         guard wasLoaded, showDebugInfo, let recorder = pending.diagnostics else { return }
         recorder.record("live engine unloaded for polish", detail: nil)
         persistDebugReport(recorder, folder: pending.folderURL, language: pending.reportLanguage)
@@ -1003,14 +1191,15 @@ final class RecorderModel {
     func startPolishForTesting(
         audioURL: URL,
         folderURL: URL,
+        meetingTitle: String? = nil,
         liveEngineName: String?,
         diagnostics: DiagnosticsRecorder?,
         reportLanguage: String?
     ) {
-        startTranscription(PendingTranscription(
+        requestTranscription(PendingTranscription(
             audioURL: audioURL,
             folderURL: folderURL,
-            meetingTitle: nil,
+            meetingTitle: meetingTitle,
             attendees: [],
             startedAt: Date(),
             liveEngineName: liveEngineName,
@@ -1056,9 +1245,15 @@ final class RecorderModel {
             try document.write(jsonTo: jsonURL)
             try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
         } catch {
-            transcriptionState = .failed("Could not write the transcript: \(error.localizedDescription)")
+            reportTranscriptionFailure("Could not write the transcript: \(error.localizedDescription)", status: nil, for: pending)
             return
         }
+        guard cardShows(pending) else {
+            announce("transcript ready", about: pending)
+            refreshRecordings()
+            return
+        }
+        lastTranscription = pending
         lastTranscriptText = markdown
         lastTranscriptURL = markdownURL
         lastDocument = document
@@ -1120,7 +1315,7 @@ final class RecorderModel {
             statusMessage = "No audio.m4a to transcribe in that folder."
             return
         }
-        startTranscription(PendingTranscription(
+        requestTranscription(PendingTranscription(
             audioURL: audio,
             folderURL: entry.folderURL,
             meetingTitle: entry.title,

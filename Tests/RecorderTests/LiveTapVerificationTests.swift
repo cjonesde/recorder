@@ -37,7 +37,7 @@ final class LiveTapVerificationTests: XCTestCase {
         }
 
         var fatal: Error?
-        tap.onFatalError = { fatal = $0 }
+        tap.onCaptureError = { fatal = $0 }
 
         try tap.start(writingTo: url)
         Thread.sleep(forTimeInterval: 8.0)
@@ -101,7 +101,7 @@ final class LiveTapVerificationTests: XCTestCase {
             reported.withLock { $0[rate, default: 0] += count }
         }
         var fatal: Error?
-        mic.onFatalError = { fatal = $0 }
+        mic.onCaptureError = { fatal = $0 }
 
         try mic.start(writingTo: url)
         Thread.sleep(forTimeInterval: 6.0)

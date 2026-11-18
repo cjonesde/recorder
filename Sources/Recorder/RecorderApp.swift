@@ -6,10 +6,12 @@ struct RecorderApp: App {
     @State private var model = RecorderModel()
 
     var body: some Scene {
-        MenuBarExtra("Recorder", systemImage: menuBarSymbol) {
+        MenuBarExtra {
             RecorderPanel()
                 .environment(model)
                 .task { model.onAppear() }
+        } label: {
+            MenuBarLabel(state: model.state, elapsed: model.elapsed)
         }
         .menuBarExtraStyle(.window)
 
@@ -18,15 +20,18 @@ struct RecorderApp: App {
         // more reliable from a menu-bar–only (.accessory) app. It's opened from the
         // panel's "Settings…" button / ⌘,.
     }
+}
 
-    /// Menu-bar glyph: a microphone at rest, the record dot while recording,
-    /// the pause glyph while paused.
-    private var menuBarSymbol: String {
-        switch model.state {
-        case .idle:      return "mic.fill"
-        case .preparing, .finishing: return "hourglass"
-        case .recording: return "record.circle.fill"
-        case .paused:    return "pause.circle.fill"
+struct MenuBarLabel: View {
+    let state: RecorderState
+    let elapsed: TimeInterval
+
+    var body: some View {
+        if let pill = MenuBarPill(state: state, elapsed: elapsed) {
+            Image(nsImage: pill.image(scale: NSScreen.main?.backingScaleFactor ?? 2))
+                .accessibilityLabel(pill.accessibilityLabel)
+        } else {
+            Image(systemName: state == .idle ? "mic.fill" : "hourglass")
         }
     }
 }

@@ -190,7 +190,7 @@ public final class VoiceCoach {
     private func process(_ frame: LevelFrame) {
         let i = frame.index
         let window = ((i - tuning.hangoverFrames)...(i + tuning.leadFrames)).map(desktopLevel)
-        let state = gate.classify(micDB: frame.db, desktopDB: window, currentDesktopDB: desktopLevel(i))
+        let state = gate.classify(micDB: frame.db, desktopDB: window)
         var f0 = 0.0
         if state == .own, let samples = micFrames.window(endingAt: i, length: pitch.span) {
             f0 = pitch.f0(samples)
@@ -295,7 +295,11 @@ public final class VoiceCoach {
         events.append(CoachEvent(t: t, kind: .sample, detector: .risingEndings, values: endings.risingSample()))
         events.append(CoachEvent(t: t, kind: .sample, detector: .trailingEndings, values: endings.trailingSample()))
         for detector in endingTriggers {
-            fire(detector, at: t, values: detector == .risingEndings ? endings.risingSample() : endings.trailingSample())
+            if detector == .risingEndings, let end = endings.flaggedRiseEnd {
+                fire(detector, at: t, values: endings.risingSample(), clip: max(0, end - tuning.clipBefore)...(end + tuning.clipAfter))
+            } else {
+                fire(detector, at: t, values: detector == .risingEndings ? endings.risingSample() : endings.trailingSample())
+            }
         }
         let rateRatio = pace.rate.flatMap { rate in pace.effectiveBaseline.map { rate / $0 } }
         let prosodyTick = prosody.tick(at: t, levelOffsetDB: energy.offsetDB, rateRatio: rateRatio)

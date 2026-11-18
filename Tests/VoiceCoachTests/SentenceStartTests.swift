@@ -53,6 +53,19 @@ final class SentenceStartTests: XCTestCase {
         XCTAssertTrue(run.huds.contains { $0.litCues.contains(.soStarts) })
     }
 
+    func testTriggerAtOneOfTen() {
+        let texts = (1...9).map { "Plain \($0)." } + ["So tenth."]
+        let lines = texts.enumerated().map { CoachLine(time: Double($0.offset + 1), text: $0.element, isOwn: true) }
+        let triggers = run(lines: lines, seconds: 12).triggers(.soStarts)
+        XCTAssertEqual(triggers.count, 1)
+        XCTAssertEqual(triggers.first?.t ?? 0, 10, accuracy: 1e-9)
+    }
+
+    func testNoTriggerWithoutSo() {
+        let lines = (1...10).map { CoachLine(time: Double($0), text: "Plain \($0).", isOwn: true) }
+        XCTAssertTrue(run(lines: lines, seconds: 12).triggers(.soStarts).isEmpty)
+    }
+
     func testNoTriggerBelowFiveSentences() {
         let lines = (1...4).map { CoachLine(time: Double($0), text: "So yes.", isOwn: true) }
         XCTAssertTrue(run(lines: lines, seconds: 6).triggers(.soStarts).isEmpty)

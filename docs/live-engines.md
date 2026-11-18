@@ -317,7 +317,7 @@ decode.
 Nemotron and Parakeet hold about 25 to 26 s of audio in memory in steady state, with
 transient peaks above that (about 41 s for a Nemotron recovery decode, about 56 s for a
 Parakeet window decode, counting the transient copies listed below), the app cannot
-erase their copies, and their text may lag up to 10 s before the recording stops with
+erase their copies, and their text may lag up to 10 s before live text restarts with
 "engine fell more than 10 s behind".
 
 Measured against the 0.18.0 source, the steady-state figures are about 25.4 s for Nemotron
@@ -349,8 +349,8 @@ memory, which is the price of keeping the app usable.
 ## Apple held audio (debug view)
 
 For Apple the held figure is measured: the app inbox (at most 0.5 s per source) plus the
-chunks queued in the `AsyncStream` that the analyzer has not taken yet (at most four
-100 ms chunks). Audio the analyzer has taken is inside Apple and is shown as unknown. The
+chunks queued in the `AsyncStream` that the analyzer has not taken yet (at most forty
+chunks of up to 100 ms). Audio the analyzer has taken is inside Apple and is shown as unknown. The
 "Buffer release" row gives the median (of the most recent 1,000) and the longest lifetime
 of the erasing PCM buffers handed to Apple, from creation until the erasing deallocator
 runs.
@@ -390,6 +390,14 @@ prepares. The debug event "live engine unloaded for polish" is written only when
 engine was loaded and debug info is on. The next recording loads the engine again from
 its cache, and the next polish pass loads Whisper again.
 The transcript records the live engine that ran as `liveEngine`.
+
+Polish passes are queued and run only while no recording is preparing or running.
+Pressing Record cancels the running pass (WhisperKit and SpeakerKit both stop at their
+next cancellation check) and returns it to the front of the queue. The pass unloads the
+live engine through the same task chain as engine selection, so a recording that starts
+mid-unload waits for the unload before it prepares, and the two never touch the engine at
+once. A cancelled pass never reloads Whisper: the model host checks for cancellation
+while it waits for a model.
 
 The debug toggle (Settings, **Show debug info**) adds a drawer to the panel, a pop-out
 window, and a `debug.json` beside each transcript. None of them contain audio or

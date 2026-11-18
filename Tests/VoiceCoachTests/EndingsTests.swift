@@ -44,6 +44,30 @@ final class EndingsTests: XCTestCase {
         XCTAssertEqual(run.triggers(.risingEndings).first?.note, "shadow")
     }
 
+    func testSingleRisingEndingFlags() throws {
+        var audio = talk([(-4, 0), (-4, 0), (4.5, 0)])
+        audio += Synth.noise(seconds: 4, db: -65, seed: 901)
+        let run = run(audio)
+        XCTAssertEqual(run.samples(.risingEndings).last?.values["rises"], 1)
+        let trigger = try XCTUnwrap(run.triggers(.risingEndings).first)
+        XCTAssertEqual(run.triggers(.risingEndings).count, 1)
+        let phraseEnd = phraseStart(2) + Self.phraseSeconds
+        XCTAssertGreaterThanOrEqual(trigger.t, phraseEnd + EndingsDetector.riseHoldSeconds - 0.5)
+        let clip = try XCTUnwrap(run.clips.first { $0.id == trigger.id })
+        XCTAssertLessThanOrEqual(clip.start, phraseEnd - 5)
+        XCTAssertGreaterThanOrEqual(clip.end, phraseEnd)
+        XCTAssertLessThanOrEqual(clip.end, phraseEnd + 2.5)
+    }
+
+    func testRisingEndingsFlagAtMostEvery45Seconds() {
+        var audio = talk([(4.5, 0)])
+        audio += Synth.noise(seconds: 42, db: -65, seed: 900)
+        audio += talk([(4.5, 0), (4.5, 0)])
+        let triggers = run(audio).triggers(.risingEndings)
+        XCTAssertEqual(triggers.count, 2)
+        XCTAssertGreaterThanOrEqual((triggers.last?.t ?? 0) - (triggers.first?.t ?? 0), 45)
+    }
+
     func testFallingStatementsDoNotTrigger() {
         let run = run(talk(Array(repeating: (-4, 0), count: 6)))
         XCTAssertTrue(run.triggers(.risingEndings).isEmpty)

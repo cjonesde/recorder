@@ -158,12 +158,27 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
         return PreparationInfo(loadSeconds: seconds, firstLoad: firstLoad, modelBytesOnDisk: nil, computeUnits: "Managed by macOS")
     }
 
+    nonisolated static let analyzerQueueChunks = 40
+
+    nonisolated static func makeAnalyzerInputs() -> (AsyncStream<AnalyzerInput>, AsyncStream<AnalyzerInput>.Continuation) {
+        AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingOldest(analyzerQueueChunks))
+    }
+
+    nonisolated static func overflowDetail(_ result: AsyncStream<AnalyzerInput>.Continuation.YieldResult) -> String {
+        switch result {
+        case .enqueued: "analyzer accepted the chunk"
+        case .dropped: "analyzer queue full, a chunk was dropped"
+        case .terminated: "analyzer input stream had already ended"
+        @unknown default: "analyzer rejected a chunk"
+        }
+    }
+
     func startSession() throws {
         guard !isSessionActive, let analyzer, let module, let format else {
             throw LiveStopError(reason: .engineError, detail: "Apple speech was not prepared")
         }
         let generation = self.generation
-        let (inputs, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .bufferingOldest(4))
+        let (inputs, continuation) = Self.makeAnalyzerInputs()
         self.continuation = continuation
         let queued = queued
         queued.reset(rate: format.sampleRate)
@@ -197,9 +212,10 @@ final class AppleLiveTranscriber: LiveSpeechEngine {
                 energyLog.record(chunk)
                 let frames = Int(chunk.buffer.frameLength)
                 queued.add(frames)
-                guard case .enqueued = continuation.yield(AnalyzerInput(buffer: chunk.buffer, bufferStartTime: chunk.startTime)) else {
+                let result = continuation.yield(AnalyzerInput(buffer: chunk.buffer, bufferStartTime: chunk.startTime))
+                guard case .enqueued = result else {
                     queued.remove(frames)
-                    throw LiveStopError(reason: .engineQueueFull, detail: nil)
+                    throw LiveStopError(reason: .engineQueueFull, detail: Self.overflowDetail(result))
                 }
             },
             onFailure: { [weak self] error in

@@ -40,6 +40,19 @@ final class FloatRingBuffer: @unchecked Sendable {
     /// Expected to stay 0 in practice (the buffer holds several seconds).
     var totalDropped: Int { droppedFrames.load(ordering: .relaxed) }
 
+    func recordLoss(_ count: Int) {
+        guard count > 0 else { return }
+        droppedFrames.wrappingAdd(count, ordering: .relaxed)
+    }
+
+    var freeFrames: Int {
+        capacity - (writeIndex.load(ordering: .relaxed) - readIndex.load(ordering: .acquiring))
+    }
+
+    var availableFrames: Int {
+        writeIndex.load(ordering: .acquiring) - readIndex.load(ordering: .relaxed)
+    }
+
     /// Producer side (realtime thread). Copies `count` frames from `src`. If
     /// there isn't room for the whole chunk it drops it (recording the loss)
     /// rather than tearing it — a partial write would itself be a glitch.

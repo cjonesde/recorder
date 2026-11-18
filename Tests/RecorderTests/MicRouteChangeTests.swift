@@ -48,7 +48,7 @@ final class MicRouteChangeTests: XCTestCase {
             reported.withLock { $0[rate, default: 0] += count }
         }
         var fatal: Error?
-        mic.onFatalError = { fatal = $0 }
+        mic.onCaptureError = { fatal = $0 }
 
         try mic.start(writingTo: url)
         Thread.sleep(forTimeInterval: 3.0)
@@ -131,7 +131,7 @@ final class MicRouteChangeTests: XCTestCase {
             reported.withLock { $0[rate, default: 0] += count }
         }
         var fatal: Error?
-        mic.onFatalError = { fatal = $0 }
+        mic.onCaptureError = { fatal = $0 }
 
         try mic.start(writingTo: url)
         Thread.sleep(forTimeInterval: 3.0)

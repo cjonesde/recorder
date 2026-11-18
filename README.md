@@ -2,6 +2,8 @@
 
 A native macOS menu-bar app for live, on-device meeting transcription. It captures
 system audio and your microphone, shows words while you speak, and saves the transcript.
+While it records, the menu bar shows a red capsule with the elapsed time (ochre with a
+pause sign while paused), in the same design as the Schriftlich app.
 
 **Transcript only** is the default for new installations. In this mode the app creates
 no audio files, including temporary recordings. Consumed app-owned PCM buffers are
@@ -48,6 +50,7 @@ passes add transient copies of up to about 16 s (Nemotron recovery) and about 30
 In the polish mode the resident live engine is unloaded before Whisper loads, and
 Whisper and the speaker diarizer are unloaded when the polish pass ends, so a live engine
 and Whisper are not kept in memory together. The next recording loads the live engine again.
+A recording that starts during a polish pass interrupts it (see Back-to-back calls).
 
 ### Debug view
 
@@ -66,9 +69,27 @@ while recording. Live speaker labels use channel energy: **You** for the microph
 
 The new pipeline has no rolling audio window or replay recovery buffer. It drains
 capture input every 50 ms, submits chunks of at most 100 ms, and limits the analyzer
-input queue to four chunks. Each source's PCM handoff is capped at 500 ms. Overload
-stops capture and marks the saved transcript incomplete. These are queue bounds,
-not a guarantee of private framework buffer lifetimes or a hard real-time deadline.
+input queue to forty chunks (about 2 s at the usual 50 ms chunk size, 4 s at most).
+Each source's PCM handoff is capped at 500 ms. These are queue bounds, not a guarantee
+of private framework buffer lifetimes or a hard real-time deadline.
+
+A recording ends only when you save or trash it, or when the silence timeout fires.
+Nothing else stops it. If live text overloads or the engine fails, the app restarts live
+text inside the same recording, keeps every line from before, and marks the gap with an
+`[incomplete: …]` line; a restart that fails is retried after 1, 2, 4 … up to 30 s. The
+words spoken during the gap are missing from the live transcript. When audio is kept, the
+high-quality pass or a later transcription fills them in. If a capture source fails (a
+microphone route change to an unusable device, a desktop tap that cannot be rebuilt, a
+disk write error), the other source keeps recording, the failed one is retried, and the
+status line says so.
+
+Desktop audio passes through a ring between the capture callback and the thread that
+writes `desktop.caf`. In transcript-only mode it holds half a second, and audio older
+than that is dropped. When audio is kept it holds 10 s: after a stall under heavy memory
+pressure the backlog is written to disk in full and only its newest quarter second goes to
+live text. Audio lost to a longer stall, a desktop tap rebuild or a microphone outage is
+written as silence, so the desktop and microphone tracks stay aligned. Each stall is
+logged as "desktop audio stalled" in `debug.json`.
 
 ## Recording modes
 
@@ -81,8 +102,25 @@ not a guarantee of private framework buffer lifetimes or a hard real-time deadli
 You can downgrade a running recording to transcript-only; this closes and removes its
 partial audio files. You cannot start retaining audio halfway through a transcript-only
 recording. Language and live-transcription settings are fixed until the recording ends.
-Pause gates both audio feeds. Save finishes the transcript before allowing another
-recording. Trash cancels recognition and removes the session folder.
+Pause gates both audio feeds. Save waits only for the live engine to finish its last
+words (about a second), writes the live transcript, and the app is ready for the next
+call. Mixing `audio.m4a` continues in the background. Trash cancels recognition and
+removes the session folder.
+
+### Back-to-back calls
+
+Local transcriptions of saved audio (the polish pass, and **Transcribe** in Recent
+recordings) go into a queue and run one at a time, oldest first. They never run while a
+recording is preparing or in progress: pressing Record stops the running pass and puts it
+back at the front of the queue, and it starts again from the beginning once the recording
+ends. The panel shows what is transcribing and how many are waiting. A finished
+transcript for an earlier call does not replace the one on screen; it is announced in the
+status line and appears in Recent recordings. The queue is kept in memory, so quitting the
+app drops waiting transcriptions; their audio stays on disk.
+
+While a recording runs, the mix of the previous call may still be finishing. The mixer
+reads both tracks into memory at once (48 kHz float, about 690 MB per track per hour), so
+the mix of a long call briefly uses a few GB alongside the new recording.
 
 Saved stereo audio has desktop sound on the left and the microphone on the right.
 Whisper models are downloaded only when transcribing a saved file. SpeakerKit can
@@ -107,8 +145,10 @@ Transcripts contain speaker names, meeting titles, invited attendees, and spoken
 An optional prompter for your own voice during calls. Switch it on with the **Voice coach**
 switch in the panel or under Settings > Coach. It is off by default.
 
-While you record, a small bar sits under the camera, above slides and full-screen apps. It
-shows no text, only colour and shape:
+While you record, a small bar sits just below the menu bar, a third of the screen width to the
+right of the camera, so Teams' sharing bar and notch apps don't cover it. It stays above slides
+and full-screen apps. Drag it anywhere; it opens where you left it next time. It shows no text,
+only colour and shape:
 
 - **Dot:** green while you speak, blue while the other side speaks, purple when you talk over
   them, gray in silence.
@@ -129,6 +169,16 @@ sound only counts as your voice once it contains at least 30 ms of voicing (a me
 pitch), so typing, clicks and desk knocks count as silence instead of dragging your pace and
 energy down.
 
+**Talking over someone has to beat the echo.** On desk speakers the microphone hears the call
+again about 0.1 s later, often louder than the system audio itself, and the two streams can drift
+up to 0.2 s apart before the coach lines them up again. So the coach learns, during each call,
+how loud that echo usually is (the 90th percentile of microphone minus system audio while the
+other side speaks) and only counts you as talking over someone when your microphone is 4 dB
+above the echo it expects from the call audio of the last 0.5 s and the next 0.15 s. Talk share
+and interruptions build on that. With headphones the learned echo is tiny, so quieter talking
+over still counts. Replayed on a real call on laptop speakers in which only 9 seconds were
+yours, this took talk share from 26% to about 1% and interruptions from 106 to at most 1.
+
 **Everything except pace and energy runs silently at first.** "So" at the start of your
 sentences (English "so", German "so" and "also", Apple engine only), rising statement endings,
 trailing endings, raised pitch and level, talk share and interruptions are all measured and
@@ -141,7 +191,7 @@ show it as a ring around the dot whenever you like.
 whether it shows. Some calls show no cues at all, more often as the weeks go on (every 5th of
 the first 10 calls, every 3rd up to 20, then every 2nd). The skipped moments are still logged,
 so you can later compare cued and uncued moments and see whether the cue changed anything.
-Switch this off under Settings > Coach.
+Switch this off under Settings > Coach; that also ends the calls without any cues.
 
 **Labelling.** Settings > Coach > Review flagged moments lists every flagged moment per
 recording, plays its clip and lets you mark it Right or False alarm. The same window shows each
@@ -150,9 +200,11 @@ check's precision and lets you put it on the bar once it qualifies.
 Pace only counts while you are actually speaking, and the ending checks only fire on a fresh
 phrase, so a cue never lights while you listen. Pausing the recording turns off any lit cue.
 Talking over someone only counts as an interruption while their audio is actually playing, so
-starting your turn right after they stop is not one. A sentence that ends in a question mark in
-the live transcript is never scored as a rising statement, even when the transcript line
-arrives several seconds late. If the system audio drops out (macOS rebuilds the
+starting your turn right after they stop is not one. An ending counts as rising when your pitch
+climbs at least 2.5 semitones over its last 0.4 seconds, and each rising ending is flagged on its
+own, at most once every 45 seconds. The flag waits 6 seconds after the ending, so a sentence
+that ends in a question mark in the live transcript is not flagged as a rising statement when
+its line arrives up to 6 seconds late. If the system audio drops out (macOS rebuilds the
 audio tap now and then), the coach notices the missing stretch, scores it as unknown and lines the
 two streams up again.
 

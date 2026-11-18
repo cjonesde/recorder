@@ -11,7 +11,7 @@ enum IntonationConstants {
     static let jumpSemitones = 7.0
     static let terminalWindow = 0.4
     static let minimumVoiced = 6
-    static let riseSemitones = 3.0
+    static let riseSemitones = 2.5
     static let fallSemitones = 1.5
     static let tail = 3
 }

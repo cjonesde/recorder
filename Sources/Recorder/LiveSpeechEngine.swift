@@ -4,6 +4,7 @@ struct LiveSessionResult {
     let lines: [TranscriptLine]
     let complete: Bool
     let stopReason: LiveStopReason?
+    var restarts = 0
     var isEmpty: Bool { lines.isEmpty }
 }
 

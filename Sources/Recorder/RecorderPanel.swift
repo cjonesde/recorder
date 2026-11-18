@@ -53,7 +53,7 @@ struct RecorderPanel: View {
                     .foregroundStyle(.secondary)
             }
 
-            if model.live.isSessionActive {
+            if model.live.inRecordingSession {
                 Divider()
                 liveTranscriptSection
             }
@@ -68,6 +68,10 @@ struct RecorderPanel: View {
             if showTranscription {
                 Divider()
                 transcriptionSection
+            }
+
+            if let summary = model.transcriptionQueueSummary {
+                transcriptionQueueLine(summary)
             }
 
             Divider()
@@ -462,7 +466,7 @@ struct RecorderPanel: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Transcribing locally…")
+                Text(model.cardProgressMessage)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -510,7 +514,7 @@ struct RecorderPanel: View {
                 // buttons above if a target doesn't accept the drag.
                 transcriptDragHandle(url)
 
-                if !model.currentSpeakers.isEmpty {
+                if !model.currentSpeakers.isEmpty && !model.cardAwaitsLocalTranscription {
                     speakerChips
                 }
             }
@@ -533,7 +537,25 @@ struct RecorderPanel: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .disabled(model.cardAwaitsLocalTranscription)
             }
+        }
+    }
+
+    private func transcriptionQueueLine(_ summary: String) -> some View {
+        HStack(spacing: 6) {
+            if model.transcriptions.running != nil && model.state == .idle {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: "clock")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+            Text(summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
         }
     }
 
@@ -699,7 +721,7 @@ struct RecorderPanel: View {
                     Button { model.transcribeExisting(entry) } label: {
                         Label("Transcribe", systemImage: "text.bubble")
                     }
-                    .disabled(model.state != .idle || model.transcriptionState == .running)
+                    .disabled(model.transcriptions.contains(entry.folderURL))
                 }
                 if let audio = entry.audioURL {
                     Button { model.copyFileToPasteboard(audio) } label: {
@@ -791,14 +813,7 @@ struct RecorderPanel: View {
 
     /// mm:ss (or h:mm:ss past an hour) for the elapsed timer.
     private func formattedElapsed(_ interval: TimeInterval) -> String {
-        let total = Int(interval.rounded(.down))
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
+        MenuBarPill.clock(interval)
     }
 }
 

@@ -181,4 +181,56 @@ final class ModeMatrixIntegrationTests: XCTestCase {
     func testDowngradingMidRecordingDeletesThePartialAudioWithParakeet() async throws {
         try await verifyDowngradingMidRecordingDeletesThePartialAudio(engine: .parakeet)
     }
+
+    func testBackToBackRecordingsHoldTheLocalPassUntilTheSecondEndsWithApple() async throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RECORDER_LIVE_MODES"] == "1",
+            "set RECORDER_LIVE_MODES=1 to run the mode matrix check"
+        )
+        let model = makeModel(mode: .keepAudioAndPolish, engine: .apple)
+
+        model.startRecording(meeting: nil)
+        while model.state == .preparing { try await Task.sleep(for: .milliseconds(100)) }
+        let first = try XCTUnwrap(model.currentSession, "first recording did not start").folderURL
+        created.append(first)
+        try await Task.sleep(for: .seconds(6))
+
+        model.saveAndStop()
+        let savedAt = ContinuousClock.now
+        while !model.canStartRecording && ContinuousClock.now - savedAt < .seconds(20) {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let readyAfter = ContinuousClock.now - savedAt
+        print("ready for the next recording \(readyAfter) after save")
+        XCTAssertLessThan(readyAfter, .seconds(5), "Record stayed blocked after save")
+
+        model.startRecording(meeting: nil)
+        while model.state == .preparing { try await Task.sleep(for: .milliseconds(100)) }
+        let second = try XCTUnwrap(model.currentSession, "second recording did not start").folderURL
+        created.append(second)
+        try await Task.sleep(for: .seconds(8))
+
+        XCTAssertNil(model.transcriptions.running, "a local pass ran during the second recording")
+        XCTAssertEqual(model.transcriptions.waiting.map(\.folderURL), [first])
+        XCTAssertEqual(model.live.engineState, .unloaded, "Whisper was loaded during the second recording")
+
+        model.saveAndStop()
+        let secondSavedAt = ContinuousClock.now
+        var quietSince: ContinuousClock.Instant?
+        while ContinuousClock.now - secondSavedAt < .seconds(180) {
+            if model.transcriptions.count == 0 && model.state == .idle {
+                let since = quietSince ?? .now
+                if ContinuousClock.now - since > .seconds(3) { break }
+                quietSince = since
+            } else {
+                quietSince = nil
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        XCTAssertEqual(model.transcriptions.count, 0, "the queued local passes never finished")
+        for folder in [first, second] {
+            XCTAssertTrue(contents(folder).contains("audio.m4a"), "\(folder.lastPathComponent) was never mixed")
+        }
+        cleanUp()
+    }
 }

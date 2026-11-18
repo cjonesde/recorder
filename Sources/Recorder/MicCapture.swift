@@ -14,7 +14,7 @@ import os
 ///   never hardcode 44.1/48 kHz, or AVAudioEngine asserts on a sample-rate mismatch
 ///   (Bluetooth mics / AirPods commonly run 16 kHz mono input).
 /// - The tap block fires on a real-time audio thread. This class only *invokes* its
-///   `onLevelDB` / `onFatalError` callbacks from that thread; the model is responsible
+///   `onLevelDB` / `onCaptureError` callbacks from that thread; the model is responsible
 ///   for hopping to main before touching UI/model state.
 ///
 /// Concurrency: written for Swift 5 language mode. Mutable state touched from both the
@@ -24,8 +24,7 @@ final class MicCapture {
 
     /// dBFS per buffer (computed via `RMSMeter`). Called on the audio thread.
     var onLevelDB: ((Float) -> Void)?
-    /// Called on an arbitrary thread when the engine fails fatally.
-    var onFatalError: ((Error) -> Void)?
+    var onCaptureError: ((Error) -> Void)?
     /// Mono samples that were just written to disk (post-downmix), with the
     /// capture sample rate. Called on the audio thread; the pointer is only
     /// valid for the duration of the call. Not invoked while paused.
@@ -76,6 +75,9 @@ final class MicCapture {
 
     /// Whether a tap is currently installed / engine running.
     private var running = false
+
+    private var nextExpectedHostTime: UInt64?
+    private var reportedOutage = false
 
     /// Mono Float32 format at the current hardware rate, used to downmix a
     /// multi-channel input buffer. Re-derived whenever the route changes.
@@ -182,6 +184,8 @@ final class MicCapture {
             self.firstHostTime = nil
             self.sampleRate = canonicalRate
             self.frameCount = 0
+            self.nextExpectedHostTime = nil
+            self.reportedOutage = false
             self.running = true
             self.downmixFormat = monoFormat
             self.resampler = converter
@@ -245,9 +249,9 @@ final class MicCapture {
                   interleaved: false
               )
         else {
-            Self.log.error("mic route changed to an unusable format; capture cannot continue")
-            lock.withLock { self.running = false }
-            onFatalError?(MicError.invalidInputFormat)
+            Self.log.error("mic route changed to an unusable format; retrying")
+            reportOutage(MicError.invalidInputFormat)
+            retryConfigurationChange()
             return
         }
 
@@ -262,7 +266,7 @@ final class MicCapture {
                 "mic route changed to \(newFormat.sampleRate, privacy: .public) Hz; resampling to the recording's \(canonical, privacy: .public) Hz"
             )
         } else {
-            Self.log.info("mic route changed, rate unchanged at \(canonical, privacy: .public) Hz")
+            Self.log.notice("mic route changed, rate unchanged at \(canonical, privacy: .public) Hz")
         }
 
         inputNode.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: newFormat) { [weak self] buffer, when in
@@ -274,16 +278,34 @@ final class MicCapture {
             do {
                 try engine.start()
             } catch {
-                Self.log.error("mic engine restart after route change failed: \(error.localizedDescription)")
-                lock.withLock { self.running = false }
-                onFatalError?(error)
+                Self.log.error("mic engine restart after route change failed, retrying: \(error.localizedDescription)")
+                reportOutage(error)
+                retryConfigurationChange()
                 return
             }
         }
 
+        lock.withLock { reportedOutage = false }
         if !lock.withLock({ running }) {
             inputNode.removeTap(onBus: 0)
             engine.stop()
+        }
+    }
+
+    private func reportOutage(_ error: Error) {
+        let first = lock.withLock {
+            defer { reportedOutage = true }
+            return !reportedOutage
+        }
+        if first { onCaptureError?(error) }
+    }
+
+    private func retryConfigurationChange() {
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.lock.withLock({ self.running }) else { return }
+            self.reconfigureQueue.addOperation { [weak self] in
+                self?.handleConfigurationChange()
+            }
         }
     }
 
@@ -346,21 +368,30 @@ final class MicCapture {
 
     /// Append one canonical-rate mono buffer to disk and forward it to `onSamples`.
     private func write(_ writeBuffer: AVAudioPCMBuffer, hostTime: UInt64) {
+        let duration = Double(writeBuffer.frameLength) / writeBuffer.format.sampleRate
         let wrote: Bool = lock.withLock {
-            guard self.running, !self.paused else { return false }
+            guard self.running, !self.paused else {
+                if self.paused { self.nextExpectedHostTime = nil }
+                return false
+            }
             if let file = self.file {
                 do {
+                    if let expected = self.nextExpectedHostTime, hostTime > expected {
+                        let gap = Self.seconds(fromHostTime: hostTime - expected)
+                        if gap > Self.paddedGapSeconds {
+                            self.frameCount += try Self.writeSilence(seconds: gap, to: file, format: writeBuffer.format)
+                        }
+                    }
                     try file.write(from: writeBuffer)
                 } catch {
-                    self.running = false
                     self.file = nil
-                    self.onFatalError?(error)
-                    return false
+                    self.onCaptureError?(error)
                 }
             }
             if self.firstHostTime == nil {
                 self.firstHostTime = hostTime
             }
+            self.nextExpectedHostTime = max(hostTime, self.nextExpectedHostTime ?? hostTime) &+ Self.hostTime(fromSeconds: duration)
             self.frameCount += AVAudioFramePosition(writeBuffer.frameLength)
             return true
         }
@@ -372,6 +403,39 @@ final class MicCapture {
 
     /// Average all channels of `buffer` into a single mono Float32 buffer with `monoFormat`.
     /// Returns nil if the source isn't Float32-accessible.
+    static let paddedGapSeconds = 0.25
+    static let longestPaddedGapSeconds = 600.0
+
+    private static let timebase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    static func seconds(fromHostTime ticks: UInt64) -> Double {
+        Double(ticks) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+    }
+
+    static func hostTime(fromSeconds seconds: Double) -> UInt64 {
+        UInt64(max(0, seconds) * 1_000_000_000 * Double(timebase.denom) / Double(timebase.numer))
+    }
+
+    static func writeSilence(seconds: Double, to file: AVAudioFile, format: AVAudioFormat) throws -> AVAudioFramePosition {
+        var remaining = Int(min(seconds, longestPaddedGapSeconds) * format.sampleRate)
+        let chunk: AVAudioFrameCount = 4096
+        guard remaining > 0, let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return 0 }
+        if let channel = silence.floatChannelData?[0] { channel.update(repeating: 0, count: Int(chunk)) }
+        var written: AVAudioFramePosition = 0
+        while remaining > 0 {
+            let n = min(Int(chunk), remaining)
+            silence.frameLength = AVAudioFrameCount(n)
+            try file.write(from: silence)
+            written += AVAudioFramePosition(n)
+            remaining -= n
+        }
+        return written
+    }
+
     private static func downmixToMono(_ buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
         let frames = buffer.frameLength
         guard frames > 0 else {

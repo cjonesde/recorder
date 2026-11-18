@@ -47,6 +47,14 @@ final class IntonationTests: XCTestCase {
         }
     }
 
+    func testModerateRiseCountsAsRising() {
+        let times = (0..<40).map { Double($0) * 0.01 }
+        let rising = times.map { $0 / 0.39 * 2.8 }
+        XCTAssertEqual(terminalContour(times: times, st: rising, start: 0, end: 0.39).contour, .rise)
+        let small = times.map { $0 / 0.39 * 2.2 }
+        XCTAssertEqual(terminalContour(times: times, st: small, start: 0, end: 0.39).contour, .level)
+    }
+
     func testCleanF0UsesGivenReference() {
         let st = cleanF0([0, 110, 110, 110, 110, 110, 0], reference: 220)
         XCTAssertTrue(st[0].isNaN)

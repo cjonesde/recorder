@@ -28,6 +28,7 @@ final class CoachPump: @unchecked Sendable {
 
     let folder: URL
     var onHUD: (@Sendable (CoachHUDState) -> Void)?
+    var onMonitor: (@Sendable (CoachMonitor) -> Void)?
 
     private let queue = DispatchQueue(label: "recorder.coach", qos: .userInitiated)
     private let micRing = FloatRingBuffer(capacityFrames: CoachPump.ringFrames)
@@ -39,6 +40,7 @@ final class CoachPump: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var log: FileHandle?
     private var lastHUD: CoachHUDState?
+    private var monitor = CoachMonitor()
     private var stopped = false
     private var retainsAudio: Bool
     private var chunk = [Float](repeating: 0, count: 4096)
@@ -137,6 +139,7 @@ final class CoachPump: @unchecked Sendable {
         let output = coach.advance()
         for event in output.events { write(event) }
         for request in output.clips { writeClip(request) }
+        if monitor.absorb(output.events) { onMonitor?(monitor) }
         if output.hud != lastHUD {
             lastHUD = output.hud
             onHUD?(output.hud)
@@ -226,6 +229,9 @@ final class CoachController {
     private(set) var isActive = false
     private(set) var isPaused = false
     private(set) var preset: CoachPreset = .presentation
+    private(set) var promoted: Set<DetectorID> = []
+    private(set) var monitor = CoachMonitor()
+    private(set) var showsChecks = false
     private(set) var hiddenForSession = false
 
     @ObservationIgnored nonisolated let relay = CoachRelay()
@@ -248,7 +254,7 @@ final class CoachController {
         config.preset = CoachPreset.pick(attendeeCount: attendeeCount)
         config.promoted = Preferences.coachPromoted
         config.withholding = Preferences.coachWithholding
-        config.cueOffSession = CuePolicy.isCueOffSession(index: store.nextSessionIndex())
+        config.cueOffSession = CuePolicy.isCueOffSession(index: store.nextSessionIndex(), withholding: config.withholding)
         config.transcriptCues = engine == .apple
         config.baselineRate = store.baseline.rate(language: language)
         config.baselineLevelDB = store.baseline.level(mic: micName)
@@ -259,10 +265,18 @@ final class CoachController {
                 self.hud = state
             }
         }
+        pump.onMonitor = { [weak self, weak pump] monitor in
+            Task { @MainActor in
+                guard let self, let pump, self.pump === pump else { return }
+                self.monitor = monitor
+            }
+        }
         self.pump = pump
         self.lines = engine == nil ? nil : lines
         seenLines = []
         preset = config.preset
+        promoted = config.promoted
+        monitor = CoachMonitor()
         hud = .idle(config.preset)
         isPaused = false
         hiddenForSession = false
@@ -317,6 +331,11 @@ final class CoachController {
 
     func audioRetentionChanged(retains: Bool) {
         pump?.audioRetentionChanged(retains: retains)
+    }
+
+    func toggleChecks() {
+        showsChecks.toggle()
+        CoachHUDPanel.shared.setExpanded(showsChecks)
     }
 
     func hideForSession() {

@@ -14,7 +14,14 @@ public struct CoachTuning: Sendable, Equatable {
     public var tapQuietDB = -50.0
     public var gateLead = 0.3
     public var gateHangover = 0.5
-    public var overlapMarginDB = 6.0
+    public var overlapMarginDB = 4.0
+    public var echoAheadSeconds = 0.15
+    public var echoLearnAboveDB = -40.0
+    public var echoFloorDB = -6.0
+    public var echoPercentile = 0.9
+    public var echoHistoryFrames = 3000
+    public var echoMinimumFrames = 200
+    public var echoRefreshFrames = 50
     public var desktopStallSeconds = 2.0
     public var cueSeconds = 4.0
     public var clipBefore = 6.0

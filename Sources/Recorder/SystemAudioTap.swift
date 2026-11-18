@@ -29,13 +29,13 @@ final class SystemAudioTap {
 
     /// dBFS per buffer (throttled to ~10-20 Hz). Called on the audio thread.
     var onLevelDB: ((Float) -> Void)?
-    /// Called on an arbitrary thread on a fatal, unrecoverable error.
-    var onFatalError: ((Error) -> Void)?
+    var onCaptureError: ((Error) -> Void)?
     /// Mono desktop samples as they are flushed to disk, with the capture sample
     /// rate. Called on the background writer thread (never the realtime IOProc);
     /// the pointer is only valid for the duration of the call. Pause is honored
     /// upstream: the IOProc stops enqueueing while paused.
     var onSamples: ((UnsafePointer<Float>, Int, Double) -> Void)?
+    var onGap: ((CaptureRingDrain.Gap, Double) -> Void)?
 
     // MARK: - Errors
 
@@ -117,6 +117,9 @@ final class SystemAudioTap {
     /// Preallocated destination for `resampler` output.
     private var resampleScratch: UnsafeMutablePointer<Float>?
     private let resampleCapacity = 16_384
+    private var silence: UnsafeMutablePointer<Float>?
+    private var ringRate: Double = 0
+    private var nextExpectedHostTime: UInt64?
     /// Background thread that drains `ring` to `file`.
     private var writerThread: Thread?
     /// Set true by `stop()` to tell the writer to drain and exit.
@@ -227,10 +230,15 @@ final class SystemAudioTap {
         // 3) Spin up the off-realtime writer (ring + drain thread) BEFORE the
         //    IOProc starts producing. ~4 s of mono float headroom; the IOProc
         //    only ever copies into this ring, never touches the disk.
-        let ringFrames = max(Int(writeFmt.sampleRate / 2), 4096)
+        let ringFrames = CaptureRingDrain.ringCapacity(sampleRate: writeFmt.sampleRate, keepsAudio: url != nil)
         let newRing = FloatRingBuffer(capacityFrames: ringFrames)
         self.ring = newRing
         self.scratch = UnsafeMutablePointer<Float>.allocate(capacity: scratchCapacity)
+        let silence = UnsafeMutablePointer<Float>.allocate(capacity: scratchCapacity)
+        silence.initialize(repeating: 0, count: scratchCapacity)
+        self.silence = silence
+        self.ringRate = writeFmt.sampleRate
+        self.nextExpectedHostTime = nil
         self.resampleScratch = UnsafeMutablePointer<Float>.allocate(capacity: resampleCapacity)
         let newResampler = RealtimeResampler(outputRate: writeFmt.sampleRate)
         newResampler.reset(inputRate: built.tapFormat.sampleRate)
@@ -246,6 +254,8 @@ final class SystemAudioTap {
             self.ring = nil
             self.scratch?.deallocate()
             self.scratch = nil
+            self.silence?.deallocate()
+            self.silence = nil
             self.resampleScratch?.deallocate()
             self.resampleScratch = nil
             self.resampler = nil
@@ -305,6 +315,8 @@ final class SystemAudioTap {
         ring = nil
         scratch?.deallocate()
         scratch = nil
+        silence?.deallocate()
+        silence = nil
         resampleScratch?.deallocate()
         resampleScratch = nil
         resampler = nil
@@ -511,6 +523,7 @@ final class SystemAudioTap {
 
         // --- Honor pause gate (meters keep updating above; only the write is gated). ---
         if paused.withLock({ $0 }) {
+            nextExpectedHostTime = nil
             return
         }
 
@@ -528,6 +541,16 @@ final class SystemAudioTap {
         if firstHostTime == nil {
             firstHostTime = inputTime.pointee.mHostTime
         }
+
+        let hostTime = inputTime.pointee.mHostTime
+        if let expected = nextExpectedHostTime, hostTime > expected, ringRate > 0,
+           let silence, writingEnabled.withLock({ $0 }) {
+            let gapSeconds = Double(Self.hostTimeToNanos(hostTime - expected)) / 1_000_000_000
+            if gapSeconds > Self.paddedGapSeconds {
+                Self.enqueueSilence(frames: Int(min(gapSeconds, MicCapture.longestPaddedGapSeconds) * ringRate), into: ring, from: silence, chunk: scratchCapacity)
+            }
+        }
+        nextExpectedHostTime = hostTime &+ Self.nanosToHostTime(UInt64(Double(frameCount) / tapFormat.sampleRate * 1_000_000_000))
 
         let resampler = self.resampler
         let passThrough = resampler?.isPassThrough ?? true
@@ -576,6 +599,26 @@ final class SystemAudioTap {
         }
     }
 
+    static let paddedGapSeconds = 0.25
+
+    static func enqueueSilence(frames: Int, into ring: FloatRingBuffer, from silence: UnsafePointer<Float>, chunk: Int) {
+        var remaining = frames
+        while remaining > 0 {
+            let n = min(chunk, remaining, ring.freeFrames)
+            guard n > 0, ring.write(silence, count: n) else {
+                ring.recordLoss(remaining)
+                return
+            }
+            remaining -= n
+        }
+    }
+
+    private static func nanosToHostTime(_ nanos: UInt64) -> UInt64 {
+        let tb = timebase
+        return nanos / UInt64(tb.numer) * UInt64(tb.denom)
+            + (nanos % UInt64(tb.numer)) * UInt64(tb.denom) / UInt64(tb.numer)
+    }
+
     static func downmixChunk(
         channelData: UnsafePointer<UnsafeMutablePointer<Float>>,
         channelCount: Int,
@@ -605,30 +648,33 @@ final class SystemAudioTap {
                 frameCapacity: AVAudioFrameCount(chunkFrames)
             ), let dst = buffer.floatChannelData?[0] else { return }
 
-            var reportedOverrun = false
+            let drain = CaptureRingDrain(ring: ring, sampleRate: writeFormat.sampleRate, chunk: dst, chunkFrames: chunkFrames)
             while true {
-                if ring.totalDropped > 0, !reportedOverrun {
-                    reportedOverrun = true
-                    self?.onFatalError?(LiveStopError(reason: .desktopRingOverflow, detail: nil))
-                }
                 let stopRequested = self?.writerShouldStop.withLock { $0 } ?? true
-                let n = ring.read(into: dst, maxCount: chunkFrames)
-                if n > 0 {
-                    defer { AudioMemory.erase(dst, count: n) }
-                    buffer.frameLength = AVAudioFrameCount(n)
-                    let persisting = self?.writingEnabled.withLock { $0 } ?? false
-                    do {
-                        if persisting, let file {
-                            try file.write(from: buffer)
+                let persisting = file != nil && (self?.writingEnabled.withLock { $0 } ?? false)
+                let report: CaptureRingDrain.Report
+                do {
+                    report = try drain.drainOnce(
+                        persisting: persisting,
+                        persist: { frames in
+                            buffer.frameLength = AVAudioFrameCount(frames)
+                            try file?.write(from: buffer)
+                        },
+                        forward: { samples, frames in
+                            self?.onSamples?(samples, frames, writeFormat.sampleRate)
                         }
-                        self?.capturedFrames += AVAudioFramePosition(n)
-                        self?.onSamples?(dst, n, writeFormat.sampleRate)
-                    } catch {
-                        self?.onFatalError?(error)
-                    }
-                } else if stopRequested {
-                    break               // empty AND asked to stop -> fully drained
-                } else {
+                    )
+                } catch {
+                    self?.writingEnabled.withLock { $0 = false }
+                    self?.onCaptureError?(error)
+                    continue
+                }
+                self?.capturedFrames += AVAudioFramePosition(report.drainedFrames + report.paddedFrames)
+                if let gap = report.gap {
+                    self?.onGap?(gap, writeFormat.sampleRate)
+                }
+                if report.drainedFrames == 0 && report.paddedFrames == 0 {
+                    if stopRequested { break }
                     usleep(5_000)
                 }
             }
@@ -686,6 +732,7 @@ final class SystemAudioTap {
         let elapsedSeconds = Double(elapsedNanos) / 1_000_000_000.0
 
         if elapsedSeconds >= watchdogSilenceThreshold {
+            Self.log.notice("desktop tap silent for \(elapsedSeconds, format: .fixed(precision: 1), privacy: .public) s while the output device is active; rebuilding")
             rebuildTapAndAggregate()
         }
     }
@@ -735,16 +782,14 @@ final class SystemAudioTap {
                         "desktop tap rebuilt at \(built.tapFormat.sampleRate, privacy: .public) Hz (was \(previousRate ?? 0, privacy: .public) Hz); resampling to the recording's \(canonical, privacy: .public) Hz"
                     )
                 } else {
-                    Self.log.info("desktop tap rebuilt at \(canonical, privacy: .public) Hz (unchanged)")
+                    Self.log.notice("desktop tap rebuilt at \(canonical, privacy: .public) Hz (unchanged)")
                 }
             }
             try installIOProcAndStartLocked()
         } catch {
             rebuilding = false
             lock.unlock()
-            // Rebuild failed: this is fatal for the desktop stream. Surface it; the mic recording
-            // and raw desktop-so-far file remain intact.
-            onFatalError?(error)
+            onCaptureError?(error)
             return
         }
 

@@ -139,6 +139,7 @@ final class ModelHost<Pipe: AnyObject> {
 
     /// Wait until a model is loaded, kicking off a load when idle or after a failure.
     func awaitReady(timeout: TimeInterval = 600) async throws -> Pipe {
+        try Task.checkCancellation()
         switch state {
         case .notDownloaded, .unloaded, .failed:
             await loadModel(selectedModel, downloadIfNeeded: true)
@@ -147,6 +148,7 @@ final class ModelHost<Pipe: AnyObject> {
         }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
+            try Task.checkCancellation()
             if let pipe, case .ready = state { return pipe }
             if case .unloaded = state {
                 await loadModel(selectedModel, downloadIfNeeded: true)
@@ -163,6 +165,7 @@ final class ModelHost<Pipe: AnyObject> {
     /// state, so one host must never decode twice at once.
     func withPipe<T>(_ body: (Pipe) async throws -> T) async throws -> T {
         while busy {
+            try Task.checkCancellation()
             try? await Task.sleep(for: .milliseconds(50))
         }
         busy = true

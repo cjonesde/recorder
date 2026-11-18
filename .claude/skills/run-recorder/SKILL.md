@@ -16,7 +16,7 @@ All paths are relative to the repo root.
 | Build signed and launch | `bash .claude/skills/run-recorder/scripts/launch.sh` |
 | Open the panel, screenshot it, print its text | `bash .claude/skills/run-recorder/scripts/open-panel.sh <png path>` |
 | Close the panel | `bash .claude/skills/run-recorder/scripts/close-panel.sh` |
-| Is it idle? | `osascript -e 'tell application "System Events" to tell process "Recorder" to get name of menu bar item 1 of menu bar 2'` prints `Microphone` when idle |
+| Is it idle? | `osascript -e 'tell application "System Events" to tell process "Recorder" to get name of menu bar item 1 of menu bar 2'` prints `Microphone` when idle, `Recording, 04:12` or `Paused, 04:12` during a recording |
 | Read settings | `defaults read com.tobi.Recorder` (for example `coachEnabled`) |
 
 After `open-panel.sh`, look at the screenshot with the Read tool. A blank or cropped image means the panel closed before the capture: run the script again.
