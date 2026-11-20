@@ -4,6 +4,7 @@ import CoreAudio
 import AudioToolbox
 import Accelerate
 import os
+import Synchronization
 
 /// Core Audio process tap (global system mix) -> desktop.caf
 ///
@@ -80,6 +81,15 @@ final class SystemAudioTap {
     /// both the control thread and (very briefly) checked against on the audio thread for the
     /// `paused` gate via a dedicated atomic flag, so the realtime path stays lock-light.
     private let lock = OSAllocatedUnfairLock()
+
+    private let outputDevice: () throws -> AudioObjectID
+    private let deliveredRate = Atomic<UInt64>(0)
+    private var rateListener: AudioObjectPropertyListenerBlock?
+    private var tapBuffers: UnsafeMutableAudioBufferListPointer?
+
+    init(outputDevice: (() throws -> AudioObjectID)? = nil) {
+        self.outputDevice = outputDevice ?? Self.defaultSystemOutputDevice
+    }
 
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
@@ -360,7 +370,7 @@ final class SystemAudioTap {
         // --- 2. Default system output device + its UID (the aggregate's master clock). ---
         let outputDevice: AudioObjectID
         do {
-            outputDevice = try Self.defaultSystemOutputDevice()
+            outputDevice = try self.outputDevice()
         } catch {
             AudioHardwareDestroyProcessTap(newTapID)
             self.tapID = kAudioObjectUnknown
@@ -414,7 +424,8 @@ final class SystemAudioTap {
         // --- 4. Read the tap's actual stream format. ---
         let format: AVAudioFormat
         do {
-            format = try Self.tapStreamFormat(newTapID)
+            format = try Self.tapStreamFormat(newTapID, deliveredAt: Self.nominalSampleRate(newAggregateID))
+            deliveredRate.store(format.sampleRate.bitPattern, ordering: .relaxed)
         } catch {
             AudioHardwareDestroyAggregateDevice(newAggregateID)
             self.aggregateID = kAudioObjectUnknown
@@ -422,6 +433,8 @@ final class SystemAudioTap {
             self.tapID = kAudioObjectUnknown
             throw error
         }
+        listenForRateChangesLocked(on: newAggregateID)
+        adoptDeliveredRate(of: newAggregateID)
 
         return BuildResult(tapFormat: format)
     }
@@ -441,9 +454,11 @@ final class SystemAudioTap {
         // the proc down (synchronously) before releasing, so a strong capture is safe and avoids
         // per-callback retain traffic.
         var newProcID: AudioDeviceIOProcID?
+        let tapBuffers = AudioBufferList.allocate(maximumBuffers: tapFmt.isInterleaved ? 1 : Int(tapFmt.channelCount))
+        self.tapBuffers = tapBuffers
         let ioBlock: AudioDeviceIOBlock = { [weak self] _, inInputData, inInputTime, _, _ in
-            guard let self else { return }
-            self.handleIO(inputData: inInputData, inputTime: inInputTime, tapFormat: tapFmt)
+            guard let self, let tapData = Self.selectTapBuffers(from: inInputData, into: tapBuffers) else { return }
+            self.handleIO(inputData: tapData, inputTime: inInputTime, tapFormat: tapFmt)
         }
 
         let createStatus = AudioDeviceCreateIOProcIDWithBlock(
@@ -470,6 +485,11 @@ final class SystemAudioTap {
             AudioDeviceDestroyIOProcID(aggregateID, procID)
         }
         ioProcID = nil
+        if let tapBuffers {
+            free(tapBuffers.unsafeMutablePointer)
+            self.tapBuffers = nil
+        }
+        stopListeningForRateChangesLocked()
 
         if aggregateID != kAudioObjectUnknown {
             AudioHardwareDestroyAggregateDevice(aggregateID)
@@ -527,6 +547,12 @@ final class SystemAudioTap {
             return
         }
 
+        let deliveredRate = Double(bitPattern: self.deliveredRate.load(ordering: .relaxed))
+        let inputRate = deliveredRate > 0 ? deliveredRate : tapFormat.sampleRate
+        if let resampler = self.resampler, resampler.inputRate != inputRate {
+            resampler.reset(inputRate: inputRate)
+        }
+
         // --- Downmix to mono and enqueue for the writer thread. ---
         // REALTIME-SAFE ONLY: no allocation, no file I/O, no `self.lock` here. We downmix into a
         // preallocated scratch buffer (vDSP) and hand the samples to a lock-free ring; a background
@@ -550,7 +576,7 @@ final class SystemAudioTap {
                 Self.enqueueSilence(frames: Int(min(gapSeconds, MicCapture.longestPaddedGapSeconds) * ringRate), into: ring, from: silence, chunk: scratchCapacity)
             }
         }
-        nextExpectedHostTime = hostTime &+ Self.nanosToHostTime(UInt64(Double(frameCount) / tapFormat.sampleRate * 1_000_000_000))
+        nextExpectedHostTime = hostTime &+ Self.nanosToHostTime(UInt64(Double(frameCount) / inputRate * 1_000_000_000))
 
         let resampler = self.resampler
         let passThrough = resampler?.isPassThrough ?? true
@@ -719,8 +745,10 @@ final class SystemAudioTap {
         lock.lock()
         let isRunning = started && !rebuilding
         let outDevice = lock_currentOutputDeviceLocked()
+        let aggregate = aggregateID
         lock.unlock()
         guard isRunning else { return }
+        adoptDeliveredRate(of: aggregate)
 
         // Only rebuild if the system output device is actually doing something — otherwise silence
         // is legitimately silence and a rebuild would be pointless churn.
@@ -740,7 +768,7 @@ final class SystemAudioTap {
     /// Read the current default output device (caller holds `lock`; just a convenience wrapper that
     /// swallows errors so the watchdog stays quiet).
     private func lock_currentOutputDeviceLocked() -> AudioObjectID? {
-        return try? Self.defaultSystemOutputDevice()
+        return try? outputDevice()
     }
 
     /// Tear down and rebuild BOTH the tap and the aggregate, reinstall the IOProc, and keep writing
@@ -840,8 +868,61 @@ final class SystemAudioTap {
         return uid as String
     }
 
+    static func selectTapBuffers(
+        from input: UnsafePointer<AudioBufferList>,
+        into tapBuffers: UnsafeMutableAudioBufferListPointer
+    ) -> UnsafePointer<AudioBufferList>? {
+        let all = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+        let wanted = tapBuffers.count
+        guard wanted > 0, all.count >= wanted else { return nil }
+        if all.count == wanted { return input }
+        for index in 0..<wanted {
+            tapBuffers[index] = all[all.count - wanted + index]
+        }
+        return UnsafePointer(tapBuffers.unsafePointer)
+    }
+
+    private static let nominalSampleRateAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    private static func nominalSampleRate(_ deviceID: AudioObjectID) -> Double? {
+        var address = nominalSampleRateAddress
+        var rate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &rate) == noErr, rate > 0 else { return nil }
+        return rate
+    }
+
+    private func listenForRateChangesLocked(on aggregate: AudioObjectID) {
+        var address = Self.nominalSampleRateAddress
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.adoptDeliveredRate(of: aggregate)
+        }
+        if AudioObjectAddPropertyListenerBlock(aggregate, &address, watchdogQueue, listener) == noErr {
+            rateListener = listener
+        }
+    }
+
+    private func stopListeningForRateChangesLocked() {
+        guard let rateListener, aggregateID != kAudioObjectUnknown else { return }
+        var address = Self.nominalSampleRateAddress
+        AudioObjectRemovePropertyListenerBlock(aggregateID, &address, watchdogQueue, rateListener)
+        self.rateListener = nil
+    }
+
+    private func adoptDeliveredRate(of aggregate: AudioObjectID) {
+        guard aggregate != kAudioObjectUnknown, let rate = Self.nominalSampleRate(aggregate) else { return }
+        let previous = deliveredRate.exchange(rate.bitPattern, ordering: .relaxed)
+        if previous != rate.bitPattern {
+            Self.log.notice("desktop output now runs at \(rate, privacy: .public) Hz (was \(Double(bitPattern: previous), privacy: .public) Hz); resampling to the recording's rate")
+        }
+    }
+
     /// Read `kAudioTapPropertyFormat` ('tfmt') and build an `AVAudioFormat`.
-    private static func tapStreamFormat(_ tapID: AudioObjectID) throws -> AVAudioFormat {
+    private static func tapStreamFormat(_ tapID: AudioObjectID, deliveredAt deliveredRate: Double?) throws -> AVAudioFormat {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioTapPropertyFormat,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -853,6 +934,7 @@ final class SystemAudioTap {
         guard status == noErr else {
             throw TapError.readTapFormatFailed(status)
         }
+        if let deliveredRate { asbd.mSampleRate = deliveredRate }
         guard asbd.mSampleRate > 0, asbd.mChannelsPerFrame > 0,
               let format = AVAudioFormat(streamDescription: &asbd) else {
             throw TapError.invalidTapFormat

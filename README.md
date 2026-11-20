@@ -303,7 +303,10 @@ when debug is on). Downloaded models and optional voice profiles are stored sepa
 swift test -c release -j 4
 ```
 
-Hardware capture and real model tests are opt-in. See the complete
+Hardware capture and real model tests are opt-in. The desktop tap's rate check plays an
+inaudible tone into BlackHole 2ch and switches it between 48 and 24 kHz, the way AirPods
+change rate when a call starts: `RECORDER_LIVE_ROUTE=1 swift test --filter TapOutputRateTests`.
+See the complete
 [investigation and benchmark results](docs/transcription-performance.md), including
 model comparisons, source links, audio-lifetime limits, raw JSON results, and reproduction
 commands. The [Apple streaming implementation](docs/apple-streaming.md) documents the
